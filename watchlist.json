@@ -1,0 +1,36 @@
+[
+  {
+    "id": "85937_S2",
+    "title": "Demon Slayer: Kimetsu no Yaiba (S2)",
+    "poster": "/pLGjaDyg2LeA2d9KZxBZCiiqC2B.jpg",
+    "type": "tv",
+    "source": "tmdb",
+    "currentEpisode": 2,
+    "totalEpisodes": 7,
+    "logs": {},
+    "personalRating": 0
+  },
+  {
+    "id": "52991",
+    "title": "Sousou no Frieren",
+    "poster": "https://cdn.myanimelist.net/images/anime/1015/138006.jpg",
+    "type": "tv",
+    "source": "mal",
+    "currentEpisode": 2,
+    "totalEpisodes": 28,
+    "logs": {},
+    "personalRating": 9
+  },
+  {
+    "id": "96677_S2",
+    "title": "Lupin (S2)",
+    "poster": "/jPe8HRnnqUTQF1MlVEwsqm6TWsw.jpg",
+    "type": "tv",
+    "source": "tmdb",
+    "currentEpisode": 7,
+    "totalEpisodes": 7,
+    "logs": {},
+    "personalRating": 0,
+    "startDate": "2025-12-24T14:45:04.923Z"
+  }
+]
