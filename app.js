@@ -492,4 +492,7 @@ app.get('/api/delete-show/:id', async (req, res) => {
     await Show.deleteOne({ id: req.params.id });
     res.redirect('/watchlist');
 });
+app.get('/', (req, res) => {
+    res.redirect('/watchlist');
+});
 app.listen(PORT, () => console.log(`🚀 VANTAGE ONLINE | PORT ${PORT}`));
