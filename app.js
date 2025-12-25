@@ -260,13 +260,15 @@ app.get('/watchlist', async (req, res) => {
 });
 
 // --- THE HYBRID ORACLE (AUTO-ID + COUNTDOWN + SEASONAL PROGRESS) ---
+// ROUTE: GET /chrono-sync
+// PURPOSE: Live tactical dashboard for savoring active shows.
 app.get('/chrono-sync', async (req, res) => {
     try {
         const list = await getWatchlist();
         const watching = list.filter(s => s.status === 'watching');
         const forceRefresh = req.query.refresh === 'true';
 
-        // --- SEASONAL PROGRESS CALCULATION ---
+        // --- SEASONAL HUD LOGIC ---
         const now = new Date();
         const month = now.getMonth();
         const year = now.getFullYear();
@@ -292,7 +294,7 @@ app.get('/chrono-sync', async (req, res) => {
                         const searchData = await searchRes.json();
                         if (searchData.data && searchData.data.length > 0) {
                             malId = searchData.data[0].mal_id;
-                            await db.collection('watchlist').updateOne({ _id: show._id }, { $set: { malId: malId } });
+                            await db.collection('watchlist').updateOne({ _id: new ObjectId(show._id) }, { $set: { malId: malId } });
                         }
                     }
                     const malResponse = await fetch(`https://api.jikan.moe/v4/anime/${malId}/full`);
@@ -306,18 +308,30 @@ app.get('/chrono-sync', async (req, res) => {
                 } else {
                     const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${show.tmdbId}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`);
                     const data = await tmdbRes.json();
+                    
+                    // Handle Movie/Special release dates vs TV episode dates
+                    const releaseDate = data.release_date || (data.next_episode_to_air ? data.next_episode_to_air.air_date : null);
                     const next = data.next_episode_to_air;
-                    const isToday = next ? new Date(next.air_date).toDateString() === now.toDateString() : false;
-                    return { ...show, nextEp: next, inProduction: data.in_production, source: 'TMDB', isToday, targetHour: 20 };
+                    const isToday = releaseDate ? new Date(releaseDate).toDateString() === now.toDateString() : false;
+                    
+                    return { ...show, nextEp: next, releaseDate, inProduction: data.in_production, source: 'TMDB', isToday, targetHour: 20 };
                 }
             } catch (e) { return { ...show, nextEp: null, airing: false }; }
         }));
 
-        const activeTimelines = liveSchedules.filter(s => s.airing || s.nextEp || s.status === "Currently Airing");
+        // --- FILTER REMOVED: Now showing all shows in 'watching' status ---
+        const activeTimelines = liveSchedules;
 
         const renderOracleRow = (s) => {
             const statusColor = s.isToday ? 'var(--accent)' : 'var(--border)';
-            const label = s.isToday ? `● AIRING TODAY` : (s.source === 'JIKAN' ? s.nextEpDate : `NEXT: ${s.nextEp?.air_date}`);
+            
+            // Logic to show "PREMIERE" or "NEXT EP" or "SCHEDULE"
+            let label = s.nextEpDate; 
+            if (s.isToday) label = `● AIRING TODAY`;
+            else if (s.source === 'TMDB') {
+                label = s.nextEp ? `NEXT: ${s.nextEp.air_date}` : (s.releaseDate ? `RELEASE: ${s.releaseDate}` : 'TBA');
+            }
+
             return `
             <div class="glass" style="margin-bottom:15px; padding:15px; border-left:3px solid ${statusColor}; display:flex; gap:15px; position:relative;">
                 <img src="${s.poster}" style="width:55px; height:80px; border-radius:5px; object-fit:cover; border:1px solid rgba(255,255,255,0.1);">
@@ -358,7 +372,7 @@ app.get('/chrono-sync', async (req, res) => {
                             <span style="font-size:10px; font-family:monospace; opacity:0.6;">${seasonProgress}% COMPLETE</span>
                         </div>
                         <div class="seasonal-bar"><div class="seasonal-progress" style="width:${seasonProgress}%"></div></div>
-                        <div style="font-size:8px; opacity:0.4; letter-spacing:1px; text-align:right;">TRANSITION TO ${month > 8 ? 'WINTER' : 'NEXT'} SEASON IN ~${Math.floor(totalSeasonDays - daysPassed)} DAYS</div>
+                        <div style="font-size:8px; opacity:0.4; letter-spacing:1px; text-align:right;">TRANSITION IN ~${Math.floor(totalSeasonDays - daysPassed)} DAYS</div>
                     </div>
 
                     <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:40px;">
