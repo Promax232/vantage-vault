@@ -259,7 +259,7 @@ app.get('/watchlist', async (req, res) => {
     </body></html>`);
 });
 
-// --- RADAR CACHE SYSTEM (PREVENTS API THROTTLING) ---
+// --- RADAR CACHE SYSTEM ---
 const RADAR_CACHE = new Map();
 const CACHE_DURATION = 1000 * 60 * 60 * 6; // 6 Hours
 
@@ -271,6 +271,21 @@ app.get('/chrono-sync', async (req, res) => {
         
         const now = new Date();
         const schedules = await Promise.all(vaultItems.map(async (show) => {
+            const cacheKey = `radar_${show.id}`;
+            const cachedEntry = RADAR_CACHE.get(cacheKey);
+
+            // --- OPTIMIZATION: THE LEGACY SHIELD ---
+            // If it's in cache and it's a finished show, we NEVER re-fetch.
+            if (cachedEntry) {
+                const isFinished = ["LEGACY", "FINISHED", "LEGEND"].includes(cachedEntry.intel.badge);
+                const isExpired = (Date.now() - cachedEntry.timestamp > CACHE_DURATION);
+                
+                // If finished, keep it forever. If not finished, only use if not expired.
+                if (isFinished || !isExpired) {
+                    return cachedEntry.intel;
+                }
+            }
+
             // --- STEP 1: INITIALIZE BASE INTEL ---
             let intel = {
                 id: show.id,
@@ -279,26 +294,15 @@ app.get('/chrono-sync', async (req, res) => {
                 subLabel: "DECRYPTING...",
                 badge: show.status.toUpperCase(),
                 sortWeight: 50,
-                timeframe: "",
                 type: show.type || 'tv'
             };
 
-            // Poster URL Sanitization
             if (intel.poster && !intel.poster.startsWith('http')) {
                 intel.poster = `https://image.tmdb.org/t/p/w500${intel.poster}`;
             }
 
-            // --- STEP 2: CACHE CHECK ---
-            const cacheKey = `radar_${show.id}`;
-            const cachedEntry = RADAR_CACHE.get(cacheKey);
-
-            if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_DURATION)) {
-                // Return cached version immediately
-                return cachedEntry.intel;
-            }
-
             try {
-                // --- STEP 3: MULTIVERSE DATA ACQUISITION ---
+                // --- STEP 2: MULTIVERSE DATA ACQUISITION ---
                 const cleanId = show.id.toString().split('_')[0];
                 
                 if (show.source === 'mal' || show.type === 'anime') {
@@ -313,16 +317,17 @@ app.get('/chrono-sync', async (req, res) => {
                             intel.sortWeight = 1;
                         } else if (a.status === "Not yet aired") {
                             intel.badge = "UPCOMING";
-                            const pDate = a.aired?.from ? new Date(a.aired.from).toLocaleDateString() : "TBA";
-                            intel.subLabel = `PREMIERE: ${pDate}`;
+                            intel.subLabel = `PREMIERE: ${a.aired?.from ? new Date(a.aired.from).toLocaleDateString() : "TBA"}`;
                             intel.sortWeight = 10;
                         } else {
+                            // Archive logic for Frieren S1
                             intel.badge = "FINISHED";
                             intel.subLabel = `${a.episodes || '?'} Episodes Total`;
                             intel.sortWeight = 100;
                         }
                     }
                 } else {
+                    // TMDB logic (Chernobyl, Lupin, etc.)
                     const tmdbUrl = `https://api.themoviedb.org/3/tv/${cleanId}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`;
                     const data = await fetch(tmdbUrl).then(r => r.json());
                     
@@ -333,11 +338,13 @@ app.get('/chrono-sync', async (req, res) => {
                             intel.badge = "LIVE";
                             intel.subLabel = `S${air.season_number}E${air.episode_number} • ${new Date(air.air_date).toLocaleDateString()}`;
                             intel.sortWeight = 0;
-                        } else if (data.status === "In Production" || data.status === "Returning Series") {
+                        } else if (data.status === "Returning Series" || data.in_production) {
+                            // This is for Lupin (Returning)
                             intel.badge = "STAGING";
                             intel.subLabel = "New Episodes Confirmed";
                             intel.sortWeight = 20;
                         } else {
+                            // This is for Chernobyl (Ended)
                             intel.badge = "LEGACY";
                             intel.subLabel = "Complete Series";
                             intel.sortWeight = 150;
@@ -345,14 +352,14 @@ app.get('/chrono-sync', async (req, res) => {
                     }
                 }
 
-                // --- MASTER OVERRIDES (STILL WITHIN FETCH BLOCK) ---
+                // --- MASTER OVERRIDES ---
                 if (show.status === 'completed') {
                     intel.badge = "LEGEND";
                     intel.sortWeight = 1000;
                 }
                 if (show.status === 'planned' && intel.sortWeight > 50) {
                     intel.badge = "SCOUT";
-                    intel.subLabel = "Monitoring for Dates...";
+                    intel.subLabel = "Monitoring...";
                 }
 
                 // COMMIT TO CACHE
@@ -377,12 +384,12 @@ app.get('/chrono-sync', async (req, res) => {
                     <div style="display:flex; justify-content:space-between; align-items:flex-end; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:20px; margin-bottom:40px;">
                         <div>
                             <h1 style="font-size:35px; font-weight:900; margin:0; letter-spacing:-1.5px;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
-                            <p style="font-family:monospace; font-size:10px; opacity:0.5; margin:5px 0 0 0;">SYSTEM TIME: ${now.toLocaleString()} // NODES_ACTIVE: ${sorted.length}</p>
+                            <p style="font-family:monospace; font-size:10px; opacity:0.5; margin:5px 0 0 0;">SYSTEM TIME: ${now.toLocaleString()} // NODES: ${sorted.length}</p>
                         </div>
                         <div style="display:flex; gap:20px; font-size:10px; font-family:monospace; letter-spacing:1px;">
                             <span style="color:var(--accent);">● LIVE</span>
                             <span style="color:#f0ad4e;">● UPCOMING</span>
-                            <span style="color:#888;">● LEGACY</span>
+                            <span style="color:#888;">● ARCHIVE</span>
                         </div>
                     </div>
 
@@ -393,13 +400,13 @@ app.get('/chrono-sync', async (req, res) => {
                                     <div style="position:relative; aspect-ratio:2/3; overflow:hidden;">
                                         <img src="${s.poster}" style="width:100%; height:100%; object-fit:cover;">
                                         <div style="position:absolute; top:15px; right:15px; background:${getBadgeColor(s.badge)}; color:black; font-weight:900; padding:5px 12px; font-size:10px; border-radius:6px; box-shadow:0 8px 20px rgba(0,0,0,0.6);">${s.badge}</div>
-                                        ${s.sortWeight > 100 ? `<div style="position:absolute; inset:0; background:rgba(0,0,0,0.4); pointer-events:none;"></div>` : ''}
+                                        ${s.sortWeight >= 100 ? `<div style="position:absolute; inset:0; background:rgba(0,0,0,0.5); pointer-events:none;"></div>` : ''}
                                     </div>
 
                                     <div style="padding:20px; background:linear-gradient(to bottom, rgba(255,255,255,0.03), transparent);">
                                         <div style="font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:15px; margin-bottom:6px;">${s.title}</div>
                                         <div style="color:var(--accent); font-family:monospace; font-size:11px; font-weight:bold; display:flex; align-items:center; gap:6px;">
-                                            <span style="width:6px; height:6px; background:var(--accent); border-radius:50%; display:inline-block; animation: pulse 2s infinite;"></span>
+                                            <span style="width:6px; height:6px; background:var(--accent); border-radius:50%; display:inline-block; ${s.sortWeight < 100 ? 'animation: pulse 2s infinite;' : ''}"></span>
                                             ${s.subLabel}
                                         </div>
                                     </div>
@@ -413,21 +420,14 @@ app.get('/chrono-sync', async (req, res) => {
                 </style>
             </body></html>`);
     } catch (err) { 
-        console.error(err);
         res.status(500).send("System Critical Failure: Radar Down."); 
     }
 });
 
-// Helper Function for Batman-Level UI consistency
 function getBadgeColor(badge) {
     const colors = {
-        'LIVE': 'var(--accent)',
-        'AIRING': 'var(--accent)',
-        'UPCOMING': '#f0ad4e',
-        'STAGING': '#5bc0de',
-        'LEGEND': 'var(--gold)',
-        'VAULT': '#888',
-        'LEGACY': '#444'
+        'LIVE': 'var(--accent)', 'UPCOMING': '#f0ad4e', 'STAGING': '#5bc0de',
+        'LEGEND': 'var(--gold)', 'VAULT': '#888', 'LEGACY': '#444', 'FINISHED': '#444'
     };
     return colors[badge] || '#ddd';
 }
