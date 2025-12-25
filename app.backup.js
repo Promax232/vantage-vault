@@ -258,7 +258,6 @@ app.get('/watchlist', async (req, res) => {
         </script>
     </body></html>`);
 });
-
 // --- CALIBRATED CHRONO-SYNC (LIVE CALENDAR LOGIC) ---
 app.get('/chrono-sync', async (req, res) => {
     const list = await getWatchlist();
@@ -272,33 +271,18 @@ app.get('/chrono-sync', async (req, res) => {
         const diffDays = Math.max(1, Math.floor((now - start) / (1000 * 60 * 60 * 24)));
         const cycleProgress = Math.min(100, Math.floor((diffDays / 90) * 100));
         const epProgress = Math.min(100, Math.floor((s.currentEpisode / (s.totalEpisodes || 1)) * 100));
- 
-        const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-        let airStatus = "";
-        let isToday = false; // DEFINED FOR UI BORDER
+
+        // Live Airing Calendar Logic
+        // Most shows air once every 7 days. We calculate based on the Start Date.
+        const daysSinceStart = Math.floor((now - start) / (1000 * 60 * 60 * 24));
+        const daysToNext = 7 - (daysSinceStart % 7);
+        const nextDate = new Date();
+        nextDate.setDate(now.getDate() + daysToNext);
         
-        if (s.manualAirDay) {
-            const targetDayIndex = daysOfWeek.indexOf(s.manualAirDay);
-            const currentDayIndex = now.getDay();
-            let daysToNext = (targetDayIndex - currentDayIndex + 7) % 7;
-            if (daysToNext === 0) {
-                isToday = true;
-                airStatus = `<span style="color:var(--accent); font-weight:bold; animation: pulse 2s infinite;">● AIRING TODAY (${s.manualAirDay})</span>`;
-            } else {
-                const nextDate = new Date();
-                nextDate.setDate(now.getDate() + daysToNext);
-                airStatus = `NEXT UPLINK: ${nextDate.toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric'})}`;
-            }
-        } else {
-            const daysSinceStart = Math.floor((now - start) / (1000 * 60 * 60 * 24));
-            const daysToNext = 7 - (daysSinceStart % 7);
-            isToday = (daysToNext === 7 || daysToNext === 0);
-            const nextDate = new Date();
-            nextDate.setDate(now.getDate() + (daysToNext === 7 ? 0 : daysToNext));
-            airStatus = isToday ? 
-                `<span style="color:var(--accent); font-weight:bold; animation: pulse 2s infinite;">● AIRING TODAY</span>` : 
-                `NEXT UPLINK: ${nextDate.toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric'})}`;
-        }
+        const isToday = daysToNext === 7 || daysToNext === 0;
+        const airStatus = isToday ? 
+            `<span style="color:var(--accent); font-weight:bold; animation: pulse 2s infinite;">● AIRING TODAY</span>` : 
+            `NEXT UPLINK: ${nextDate.toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric'})}`;
 
         return `
         <div class="glass chrono-row" style="margin-bottom:20px; border-left: 2px solid ${isToday ? 'var(--accent)' : 'var(--border)'};">
@@ -323,14 +307,6 @@ app.get('/chrono-sync', async (req, res) => {
                     <span style="font-size:9px; font-family:monospace; width:30px; opacity:0.6;">${epProgress}%</span>
                 </div>
 
-                <div style="margin-top:12px; display:flex; align-items:center; gap:8px;">
-                    <span style="font-size:8px; opacity:0.4; letter-spacing:1px;">SET_FIXED_DAY:</span>
-                    <select onchange="window.location.href='/set-air-day?id=${s._id}&day='+this.value" style="background:rgba(255,255,255,0.05); color:var(--accent); border:1px solid var(--border); font-size:9px; border-radius:4px; padding:2px 4px; cursor:pointer; font-family:monospace;">
-                        <option value="">AUTO-DETECT</option>
-                        ${daysOfWeek.map(d => `<option value="${d}" ${s.manualAirDay === d ? 'selected' : ''}>${d.toUpperCase()}</option>`).join('')}
-                    </select>
-                </div>
-
                 <div style="display:flex; justify-content:space-between; margin-top:10px;">
                      <div style="font-size:8px; opacity:0.4; letter-spacing:1px; text-transform:uppercase;">Tactical Window: ${cycleProgress}% of 90-Day Cycle</div>
                      ${s.currentEpisode >= s.totalEpisodes ? '<span style="font-size:8px; color:var(--gold);">COMPLETION IMMINENT</span>' : ''}
@@ -338,34 +314,6 @@ app.get('/chrono-sync', async (req, res) => {
             </div>
         </div>`;
     };
-
-    res.send(`<html>
-        <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-            ${HUD_STYLE}
-            <style>
-                @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
-            </style>
-        </head>
-        <body>
-        ${NAV_COMPONENT}
-        <div style="padding:20px; max-width:800px; margin:auto; padding-top:80px;">
-            <h1 style="font-size:24px; margin:0; font-weight:900;">CHRONO-<span class="accent-text">SYNC</span></h1>
-            <p style="opacity:0.5; font-size:11px; letter-spacing:1px; margin-bottom:30px;">LIVE AIRING CALENDAR</p>
-            ${active.map(s => renderChronoRow(s)).join('')}
-        </div>
-    </body></html>`);
-});
-
-// THIS GOES OUTSIDE THE CHRONO-SYNC ROUTE
-app.get('/set-air-day', async (req, res) => {
-    const { id, day } = req.query;
-    const { ObjectId } = require('mongodb'); 
-    await db.collection('watchlist').updateOne({ _id: new ObjectId(id) }, { $set: { manualAirDay: day } });
-    res.redirect('/chrono-sync');
-});
-
-
     res.send(`<html>
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -393,7 +341,7 @@ app.get('/set-air-day', async (req, res) => {
             </div>
         </div>
     </body></html>`);
-
+});
 
     res.send(`<html>
         <head>
