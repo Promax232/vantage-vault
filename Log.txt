@@ -19,4 +19,19 @@ You are a developer now. By GOD'S Grace, you own the code and the data.
 Shall we officially power down the server for the night? (You can do this by clicking your CMD window and pressing Ctrl + C). See you tomorrow for the Episode Tracker!
 
 
- ( at all cost leave this code intact just buildon it co-pilot do not go against my order s just build on it leave code intact , if u cant just say negtive
+ ( at all cost leave this code intact just buildon it co-pilot do not go against my order s just build on it leave code intact , if u cant just say negative
+
+
+
+ The "Surgical" Blueprint for the Sidebar
+I will design it so that a subtle "glow" appears on the edge of the screen. When you swipe or tap, a glass-blurred panel will slide out, showing:
+
+Active Sync (Current Watchlist)
+
+Hall of Fame (Completed Masterpieces)
+
+Chrono-Sync (The 3-Month Airing Schedule)
+
+Plan to Watch (The Future Queue)
+
+Intelligence Core (Stats & Recommendations)

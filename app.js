@@ -100,6 +100,7 @@ app.post('/api/vantage-chat/:id', async (req, res) => {
     } catch (e) { res.status(500).json({ response: "Uplink unstable." }); }
 });
 
+// --- UI SYSTEMS (UPDATED WITH SIDEBAR CSS) ---
 const HUD_STYLE = `
 <style>
 :root { --accent: #00d4ff; --gold: #ffcc00; --red: #ff4c4c; --bg: #05070a; --card: rgba(22, 27, 34, 0.7); --border: #30363d; }
@@ -136,7 +137,48 @@ body { background: var(--bg); color: #f0f6fc; font-family: 'Segoe UI', system-ui
 .mic-btn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 20px; transition: 0.3s; padding: 5px; }
 .mic-active { color: var(--red) !important; filter: drop-shadow(0 0 8px var(--red)); animation: pulse 1.5s infinite; }
 @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+
+/* SIDEBAR COMMAND CENTER */
+#nav-trigger { position: fixed; top: 0; left: 0; width: 25px; height: 100vh; z-index: 999; cursor: pointer; }
+#nav-trigger:hover { background: linear-gradient(90deg, rgba(0,212,255,0.2) 0%, transparent 100%); }
+.sidebar { position: fixed; top: 0; left: -300px; width: 280px; height: 100vh; background: rgba(5, 7, 10, 0.95); backdrop-filter: blur(20px); border-right: 1px solid var(--border); z-index: 1000; transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1); padding: 40px 25px; display: flex; flex-direction: column; box-shadow: 10px 0 50px rgba(0,0,0,0.8); }
+.sidebar.active { left: 0; }
+.nav-link { color: #8b949e; text-decoration: none; padding: 15px; margin: 5px 0; border-radius: 8px; font-size: 13px; letter-spacing: 1px; display: flex; align-items: center; gap: 15px; transition: 0.2s; border: 1px solid transparent; text-transform: uppercase; font-weight: 600; }
+.nav-link:hover, .nav-link.active { color: var(--accent); background: rgba(0, 212, 255, 0.05); border-color: rgba(0, 212, 255, 0.2); text-shadow: 0 0 10px rgba(0,212,255,0.4); }
+.nav-icon { font-size: 16px; width: 20px; text-align: center; }
+.close-btn { position: absolute; top: 20px; right: 20px; background: none; border: none; color: var(--red); font-size: 24px; cursor: pointer; opacity: 0.7; }
+.overlay { position: fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.6); z-index:998; opacity:0; pointer-events:none; transition:0.3s; }
+.overlay.active { opacity:1; pointer-events:all; }
+.nav-burger { position: absolute; left: 20px; top: 25px; z-index: 900; background: none; border: none; color: var(--accent); font-size: 20px; cursor: pointer; opacity: 0.7; }
 </style>
+`;
+
+// --- NEW COMPONENT: SIDEBAR NAVIGATION ---
+const NAV_COMPONENT = `
+<button class="nav-burger" onclick="toggleNav()">☰</button>
+<div id="nav-trigger" onclick="toggleNav()"></div>
+<div id="overlay" class="overlay" onclick="toggleNav()"></div>
+<div id="sidebar" class="sidebar">
+    <button class="close-btn" onclick="toggleNav()">×</button>
+    <h2 style="color:var(--accent); font-size:14px; margin-bottom:40px; letter-spacing:3px; border-bottom:1px solid var(--border); padding-bottom:15px;">VANTAGE <span style="color:white;">HUD 2.0</span></h2>
+    
+    <a href="/watchlist" class="nav-link active"><span class="nav-icon">⦿</span> ACTIVE SYNC</a>
+    <a href="#" class="nav-link" style="opacity:0.4; cursor:not-allowed;"><span class="nav-icon">🏆</span> HALL OF FAME <small style="font-size:8px; margin-left:auto;">[LOCKED]</small></a>
+    <a href="#" class="nav-link" style="opacity:0.4; cursor:not-allowed;"><span class="nav-icon">⏳</span> CHRONO-SYNC <small style="font-size:8px; margin-left:auto;">[LOCKED]</small></a>
+    <a href="#" class="nav-link" style="opacity:0.4; cursor:not-allowed;"><span class="nav-icon">🔖</span> PLAN TO WATCH <small style="font-size:8px; margin-left:auto;">[LOCKED]</small></a>
+    <a href="#" class="nav-link" style="opacity:0.4; cursor:not-allowed;"><span class="nav-icon">🧠</span> INTELLIGENCE <small style="font-size:8px; margin-left:auto;">[LOCKED]</small></a>
+
+    <div style="margin-top:auto; padding-top:20px; border-top:1px solid var(--border);">
+        <div style="font-size:9px; color:#8b949e; letter-spacing:1px;">SYSTEM: ONLINE</div>
+        <div style="font-size:9px; color:#8b949e; letter-spacing:1px;">EXPANSION: PHASE 1</div>
+    </div>
+</div>
+<script>
+    function toggleNav() {
+        document.getElementById('sidebar').classList.toggle('active');
+        document.getElementById('overlay').classList.toggle('active');
+    }
+</script>
 `;
 
 const VOICE_SCRIPT = `
@@ -193,9 +235,12 @@ app.get('/watchlist', async (req, res) => {
             ${HUD_STYLE}
         </head>
         <body>
-        <div style="padding:15px; max-width:1200px; margin:auto;">
+        ${NAV_COMPONENT}
+        <div style="padding:15px; max-width:1200px; margin:auto; padding-top:60px;">
             <header style="margin-bottom:30px;">
-                <h1 style="font-size:22px; margin-bottom:20px;">VANTAGE <span class="accent-text">VAULT</span></h1>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                    <h1 style="font-size:22px; margin:0;">VANTAGE <span class="accent-text">VAULT</span></h1>
+                </div>
                 <div style="display:flex; gap:10px; align-items:center; position:relative;">
                     <input id="q" class="input-field" placeholder="Search archives..." onkeyup="if(event.key==='Enter') search()">
                     <button onclick="startVoiceInput(event)" class="mic-btn" style="position:absolute; right:10px;">🎤</button>
@@ -274,7 +319,8 @@ app.get('/show/:type/:id', async (req, res) => {
             ${HUD_STYLE}
         </head>
         <body>
-        <div class="split-view">
+        ${NAV_COMPONENT}
+        <div class="split-view" style="padding-top:40px;">
             <div class="side-panel">
                 <img src="${displayPoster}" style="width:100%; border-radius:12px; margin-bottom:20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
                 <h1 style="font-size:20px; margin:0 0 10px 0;">${local?.title || data.title}</h1>
