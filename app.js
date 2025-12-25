@@ -26,6 +26,7 @@ const showSchema = new mongoose.Schema({
     currentEpisode: Number,
     totalEpisodes: Number,
     personalRating: Number,
+    status: { type: String, default: 'watching' }, // 'watching', 'planned', 'completed'
     logs: { type: Map, of: Object, default: {} },
     startDate: String
 });
@@ -100,77 +101,66 @@ app.post('/api/vantage-chat/:id', async (req, res) => {
     } catch (e) { res.status(500).json({ response: "Uplink unstable." }); }
 });
 
-// --- UI SYSTEMS (UPDATED WITH SIDEBAR CSS) ---
+// --- UI SYSTEMS (APPLE-POLISHED REFINE) ---
 const HUD_STYLE = `
 <style>
-:root { --accent: #00d4ff; --gold: #ffcc00; --red: #ff4c4c; --bg: #05070a; --card: rgba(22, 27, 34, 0.7); --border: #30363d; }
-body { background: var(--bg); color: #f0f6fc; font-family: 'Segoe UI', system-ui; margin: 0; padding: 0; overflow-x: hidden; -webkit-tap-highlight-color: transparent; }
+:root { --accent: #00d4ff; --gold: #ffcc00; --red: #ff4c4c; --bg: #05070a; --card: rgba(22, 27, 34, 0.6); --border: rgba(48, 54, 61, 0.5); }
+body { background: var(--bg); color: #f0f6fc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
 
 /* LAYOUT ENGINE */
 .split-view { display: flex; flex-direction: column; min-height: 100vh; }
-.side-panel { width: 100%; padding: 20px; box-sizing: border-box; border-bottom: 1px solid var(--border); }
+.side-panel { width: 100%; padding: 25px; box-sizing: border-box; }
 .main-panel { width: 100%; padding: 20px; box-sizing: border-box; }
 
 @media (min-width: 1025px) {
     .split-view { flex-direction: row; height: 100vh; overflow: hidden; }
-    .side-panel { width: 400px; border-right: 1px solid var(--border); border-bottom: none; overflow-y: auto; }
-    .main-panel { flex: 1; overflow-y: auto; padding: 40px; }
+    .side-panel { width: 420px; border-right: 1px solid var(--border); overflow-y: auto; background: rgba(255,255,255,0.02); }
+    .main-panel { flex: 1; overflow-y: auto; padding: 60px; }
 }
 
 /* UI ELEMENTS */
-.glass { background: var(--card); backdrop-filter: blur(15px); border: 1px solid var(--border); border-radius: 16px; transition: 0.3s; }
-.glass:hover { border-color: var(--accent); }
-.accent-text { color: var(--accent); text-shadow: 0 0 10px rgba(0,212,255,0.3); }
-.input-field { background: #010409; border: 1px solid var(--border); color: white; padding: 12px; border-radius: 8px; outline: none; width: 100%; box-sizing: border-box; font-size: 16px; }
-.btn { background: transparent; border: 1px solid var(--accent); color: var(--accent); padding: 10px 20px; cursor: pointer; border-radius: 6px; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 1px; }
-.btn:active { transform: scale(0.95); }
+.glass { background: var(--card); backdrop-filter: blur(25px); border: 0.5px solid var(--border); border-radius: 18px; transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1); }
+.glass:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
+.accent-text { color: var(--accent); font-weight: 800; letter-spacing: -0.5px; }
+.input-field { background: rgba(1, 4, 9, 0.8); border: 1px solid var(--border); color: white; padding: 14px; border-radius: 12px; outline: none; width: 100%; box-sizing: border-box; font-size: 15px; transition: 0.3s; }
+.input-field:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(0,212,255,0.1); }
+.btn { background: transparent; border: 1px solid var(--accent); color: var(--accent); padding: 12px 24px; cursor: pointer; border-radius: 10px; font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: 1.5px; transition: 0.3s; }
+.btn:hover { background: var(--accent); color: black; }
 
-/* RATING ORBS */
-.rating-orb { width: 32px; height: 32px; margin: 4px; border: 1px solid var(--accent); background: none; color: var(--accent); border-radius: 50%; cursor: pointer; font-size: 11px; transition: 0.3s; }
-.rating-orb.active { background: var(--accent); color: black; box-shadow: 0 0 15px var(--accent); }
+/* SIDEBAR REFINEMENT */
+#nav-trigger { position: fixed; top: 0; left: 0; width: 15px; height: 100vh; z-index: 999; cursor: pointer; }
+.sidebar { position: fixed; top: 0; left: -320px; width: 300px; height: 100vh; background: rgba(5, 7, 10, 0.98); backdrop-filter: blur(30px); border-right: 1px solid var(--border); z-index: 1001; transition: 0.5s cubic-bezier(0.19, 1, 0.22, 1); padding: 50px 30px; display: flex; flex-direction: column; visibility: hidden; }
+.sidebar.active { left: 0; visibility: visible; box-shadow: 20px 0 80px rgba(0,0,0,0.9); }
+.nav-link { color: #8b949e; text-decoration: none; padding: 18px; margin: 8px 0; border-radius: 12px; font-size: 12px; letter-spacing: 1.2px; display: flex; align-items: center; gap: 15px; transition: 0.3s; font-weight: 600; }
+.nav-link:hover, .nav-link.active { color: var(--accent); background: rgba(0, 212, 255, 0.08); border-left: 4px solid var(--accent); }
+.nav-burger { position: fixed; left: 25px; top: 25px; z-index: 1000; background: rgba(22, 27, 34, 0.5); backdrop-filter: blur(10px); border: 1px solid var(--border); color: var(--accent); width: 45px; height: 45px; border-radius: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+.overlay { position: fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.7); z-index:1000; opacity:0; pointer-events:none; transition:0.4s; visibility: hidden; }
+.overlay.active { opacity:1; pointer-events:all; visibility: visible; }
 
-/* CHRONO LINK */
-.chrono-link { display: flex; gap: 10px; overflow-x: auto; padding: 15px 0; scrollbar-width: none; }
-.chrono-item { font-size: 10px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 4px; white-space: nowrap; color: #8b949e; background: rgba(255,255,255,0.02); }
-.chrono-today { border-color: var(--accent); color: var(--accent); }
+/* POSTER GRID */
+.poster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 20px; padding: 10px; }
+@media (max-width: 600px) { .poster-grid { grid-template-columns: 1fr 1fr; gap: 12px; } }
 
-.mic-btn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 20px; transition: 0.3s; padding: 5px; }
-.mic-active { color: var(--red) !important; filter: drop-shadow(0 0 8px var(--red)); animation: pulse 1.5s infinite; }
-@keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
-
-/* SIDEBAR COMMAND CENTER */
-#nav-trigger { position: fixed; top: 0; left: 0; width: 25px; height: 100vh; z-index: 999; cursor: pointer; }
-#nav-trigger:hover { background: linear-gradient(90deg, rgba(0,212,255,0.2) 0%, transparent 100%); }
-.sidebar { position: fixed; top: 0; left: -300px; width: 280px; height: 100vh; background: rgba(5, 7, 10, 0.95); backdrop-filter: blur(20px); border-right: 1px solid var(--border); z-index: 1000; transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1); padding: 40px 25px; display: flex; flex-direction: column; box-shadow: 10px 0 50px rgba(0,0,0,0.8); }
-.sidebar.active { left: 0; }
-.nav-link { color: #8b949e; text-decoration: none; padding: 15px; margin: 5px 0; border-radius: 8px; font-size: 13px; letter-spacing: 1px; display: flex; align-items: center; gap: 15px; transition: 0.2s; border: 1px solid transparent; text-transform: uppercase; font-weight: 600; }
-.nav-link:hover, .nav-link.active { color: var(--accent); background: rgba(0, 212, 255, 0.05); border-color: rgba(0, 212, 255, 0.2); text-shadow: 0 0 10px rgba(0,212,255,0.4); }
-.nav-icon { font-size: 16px; width: 20px; text-align: center; }
-.close-btn { position: absolute; top: 20px; right: 20px; background: none; border: none; color: var(--red); font-size: 24px; cursor: pointer; opacity: 0.7; }
-.overlay { position: fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.6); z-index:998; opacity:0; pointer-events:none; transition:0.3s; }
-.overlay.active { opacity:1; pointer-events:all; }
-.nav-burger { position: absolute; left: 20px; top: 25px; z-index: 900; background: none; border: none; color: var(--accent); font-size: 20px; cursor: pointer; opacity: 0.7; }
+.rating-orb { width: 34px; height: 34px; margin: 5px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: #8b949e; border-radius: 50%; cursor: pointer; font-size: 12px; transition: 0.3s; }
+.rating-orb.active { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 15px rgba(0,212,255,0.3); background: rgba(0,212,255,0.1); }
 </style>
 `;
 
-// --- NEW COMPONENT: SIDEBAR NAVIGATION ---
 const NAV_COMPONENT = `
 <button class="nav-burger" onclick="toggleNav()">☰</button>
-<div id="nav-trigger" onclick="toggleNav()"></div>
+<div id="nav-trigger" onmouseover="toggleNav()"></div>
 <div id="overlay" class="overlay" onclick="toggleNav()"></div>
 <div id="sidebar" class="sidebar">
-    <button class="close-btn" onclick="toggleNav()">×</button>
-    <h2 style="color:var(--accent); font-size:14px; margin-bottom:40px; letter-spacing:3px; border-bottom:1px solid var(--border); padding-bottom:15px;">VANTAGE <span style="color:white;">HUD 2.0</span></h2>
+    <h2 style="color:var(--accent); font-size:12px; margin-bottom:50px; letter-spacing:4px; font-weight:900;">VANTAGE <span style="color:white; opacity:0.5;">HUD</span></h2>
     
-    <a href="/watchlist" class="nav-link active"><span class="nav-icon">⦿</span> ACTIVE SYNC</a>
-    <a href="#" class="nav-link" style="opacity:0.4; cursor:not-allowed;"><span class="nav-icon">🏆</span> HALL OF FAME <small style="font-size:8px; margin-left:auto;">[LOCKED]</small></a>
-    <a href="#" class="nav-link" style="opacity:0.4; cursor:not-allowed;"><span class="nav-icon">⏳</span> CHRONO-SYNC <small style="font-size:8px; margin-left:auto;">[LOCKED]</small></a>
-    <a href="#" class="nav-link" style="opacity:0.4; cursor:not-allowed;"><span class="nav-icon">🔖</span> PLAN TO WATCH <small style="font-size:8px; margin-left:auto;">[LOCKED]</small></a>
-    <a href="#" class="nav-link" style="opacity:0.4; cursor:not-allowed;"><span class="nav-icon">🧠</span> INTELLIGENCE <small style="font-size:8px; margin-left:auto;">[LOCKED]</small></a>
+    <a href="/watchlist" class="nav-link"><span class="nav-icon">⦿</span> ACTIVE SYNC</a>
+    <a href="/plan-to-watch" class="nav-link"><span class="nav-icon">🔖</span> PLAN TO WATCH</a>
+    <a href="#" class="nav-link" style="opacity:0.3; cursor:not-allowed;"><span class="nav-icon">🏆</span> HALL OF FAME</a>
+    <a href="#" class="nav-link" style="opacity:0.3; cursor:not-allowed;"><span class="nav-icon">⏳</span> CHRONO-SYNC</a>
 
-    <div style="margin-top:auto; padding-top:20px; border-top:1px solid var(--border);">
-        <div style="font-size:9px; color:#8b949e; letter-spacing:1px;">SYSTEM: ONLINE</div>
-        <div style="font-size:9px; color:#8b949e; letter-spacing:1px;">EXPANSION: PHASE 1</div>
+    <div style="margin-top:auto; padding:20px; background:rgba(255,255,255,0.03); border-radius:15px; border:1px solid var(--border);">
+        <div style="font-size:10px; color:var(--accent); letter-spacing:1px; margin-bottom:5px;">● SYSTEM ONLINE</div>
+        <div style="font-size:9px; color:#8b949e; opacity:0.6;">PHASE 2: SIDEBAR STABILIZED</div>
     </div>
 </div>
 <script>
@@ -205,25 +195,27 @@ const VOICE_SCRIPT = `
 
 app.get('/watchlist', async (req, res) => {
     const list = await getWatchlist();
-    const activeSyncs = list.filter(s => s.currentEpisode < (s.totalEpisodes || 1));
-    const hallOfFame = list.filter(s => s.currentEpisode >= (s.totalEpisodes || 1));
+    const activeSyncs = list.filter(s => s.status === 'watching' && s.currentEpisode < (s.totalEpisodes || 1));
+    const completed = list.filter(s => s.currentEpisode >= (s.totalEpisodes || 1));
     
-    const renderCard = (s, isGold = false) => {
+    const renderCard = (s) => {
         const total = s.totalEpisodes || 1;
         const progress = Math.min(100, Math.floor((s.currentEpisode / total) * 100));
         let posterUrl = s.poster;
         if (posterUrl && !posterUrl.startsWith('http')) posterUrl = `https://image.tmdb.org/t/p/w500${posterUrl}`;
         
         return `
-        <div class="glass" style="width:160px; padding:12px; display:inline-block; margin:8px; vertical-align:top; position:relative;">
-            <a href="/show/${s.type}/${s.id}"><img src="${posterUrl}" style="width:100%; height:230px; object-fit:cover; border-radius:8px;"></a>
-            <div style="height:3px; background:rgba(255,255,255,0.1); margin-top:8px; border-radius:2px; overflow:hidden;">
-                <div style="width:${progress}%; height:100%; background:var(--accent);"></div>
-            </div>
-            <h4 style="font-size:12px; margin:8px 0 4px 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${s.title}</h4>
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-size:10px; color:var(--accent); font-family:monospace;">${s.currentEpisode}/${total}</span>
-                <button onclick="updateEp('${s.id}', 'plus')" style="background:none; border:none; color:var(--accent); cursor:pointer; font-size:16px;">+</button>
+        <div class="glass" style="padding:10px; position:relative; overflow:hidden;">
+            <a href="/show/${s.type}/${s.id}"><img src="${posterUrl}" style="width:100%; height:240px; object-fit:cover; border-radius:12px;"></a>
+            <div style="padding:10px;">
+                <h4 style="font-size:13px; margin:5px 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-weight:600;">${s.title}</h4>
+                <div style="height:4px; background:rgba(255,255,255,0.05); border-radius:10px; margin:10px 0;">
+                    <div style="width:${progress}%; height:100%; background:var(--accent); box-shadow: 0 0 10px var(--accent);"></div>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-size:11px; color:var(--accent); font-family:monospace; font-weight:bold;">${s.currentEpisode}/${total}</span>
+                    <button onclick="updateEp('${s.id}', 'plus')" style="background:rgba(0,212,255,0.1); border:none; color:var(--accent); width:28px; height:28px; border-radius:8px; cursor:pointer; font-weight:bold;">+</button>
+                </div>
             </div>
         </div>`;
     };
@@ -236,28 +228,25 @@ app.get('/watchlist', async (req, res) => {
         </head>
         <body>
         ${NAV_COMPONENT}
-        <div style="padding:15px; max-width:1200px; margin:auto; padding-top:60px;">
-            <header style="margin-bottom:30px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-                    <h1 style="font-size:22px; margin:0;">VANTAGE <span class="accent-text">VAULT</span></h1>
+        <div style="padding:20px; max-width:1400px; margin:auto; padding-top:80px;">
+            <header style="margin-bottom:40px;">
+                <h1 style="font-size:28px; margin:0 0 20px 0; font-weight:900;">VANTAGE <span class="accent-text">VAULT</span></h1>
+                <div style="display:flex; gap:12px; align-items:center; position:relative;">
+                    <input id="q" class="input-field" style="padding-left:45px;" placeholder="Search archives..." onkeyup="if(event.key==='Enter') search()">
+                    <span style="position:absolute; left:18px; opacity:0.4;">🔍</span>
+                    <button onclick="startVoiceInput(event)" class="mic-btn" style="position:absolute; right:15px; border:none; background:none; cursor:pointer; font-size:18px;">🎤</button>
                 </div>
-                <div style="display:flex; gap:10px; align-items:center; position:relative;">
-                    <input id="q" class="input-field" placeholder="Search archives..." onkeyup="if(event.key==='Enter') search()">
-                    <button onclick="startVoiceInput(event)" class="mic-btn" style="position:absolute; right:10px;">🎤</button>
-                </div>
-                <div id="results" class="glass" style="display:none; position:absolute; left:15px; right:15px; z-index:100; max-height:300px; overflow-y:auto; margin-top:5px;"></div>
-                
-                <div class="chrono-link" id="schedule-bar"></div>
+                <div id="results" class="glass" style="display:none; position:absolute; left:20px; right:20px; z-index:1001; max-height:400px; overflow-y:auto; margin-top:10px; padding:10px;"></div>
             </header>
 
-            <h2 style="font-size:12px; letter-spacing:2px; opacity:0.5; margin-left:8px;">ACTIVE_SYNC</h2>
-            <div style="white-space:nowrap; overflow-x:auto; padding-bottom:10px;">
+            <h2 style="font-size:11px; letter-spacing:3px; opacity:0.4; margin:0 0 20px 10px; font-weight:800;">● ACTIVE_SYNC</h2>
+            <div class="poster-grid">
                 ${activeSyncs.map(s => renderCard(s)).join('')}
             </div>
 
-            ${hallOfFame.length ? `<h2 style="font-size:12px; letter-spacing:2px; opacity:0.5; margin-top:30px; margin-left:8px;">COMPLETED_ARCHIVE</h2>
-            <div style="white-space:nowrap; overflow-x:auto;">
-                ${hallOfFame.map(s => renderCard(s, true)).join('')}
+            ${completed.length ? `<h2 style="font-size:11px; letter-spacing:3px; opacity:0.4; margin:40px 0 20px 10px; font-weight:800;">● ARCHIVE_COMPLETED</h2>
+            <div class="poster-grid" style="opacity:0.7;">
+                ${completed.map(s => renderCard(s)).join('')}
             </div>` : ''}
         </div>
         ${VOICE_SCRIPT}
@@ -266,29 +255,69 @@ app.get('/watchlist', async (req, res) => {
                 const q = document.getElementById('q').value;
                 const resDiv = document.getElementById('results');
                 if(!q) { resDiv.style.display='none'; return; }
-                resDiv.style.display = 'block'; resDiv.innerHTML = '<p style="padding:10px;">Scanning...</p>';
+                resDiv.style.display = 'block'; resDiv.innerHTML = '<p style="padding:20px; opacity:0.5;">Scanning Multiverse...</p>';
                 const r = await fetch('/api/search?q='+q);
                 const d = await r.json();
                 let html = d.mal.concat(d.tmdb).map(i => \`
-                    <div style="padding:12px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
-                        <span style="font-size:13px;">\${i.title}</span>
-                        <button class="btn" style="padding:5px 10px;" onclick="location.href='/save?title=\${encodeURIComponent(i.title)}&id=\${i.id}&poster=\${encodeURIComponent(i.poster_path)}&type=\${i.media_type}&source=\${i.source}&total=\${i.total}'">ADD</button>
+                    <div style="padding:15px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <div style="font-size:14px; font-weight:600;">\${i.title}</div>
+                            <div style="font-size:10px; opacity:0.5; margin-top:4px;">\${i.source.toUpperCase()} • \${i.media_type}</div>
+                        </div>
+                        <div style="display:flex; gap:5px;">
+                            <button class="btn" style="padding:8px 12px; font-size:9px;" onclick="location.href='/save?title=\${encodeURIComponent(i.title)}&id=\${i.id}&poster=\${encodeURIComponent(i.poster_path)}&type=\${i.media_type}&source=\${i.source}&total=\${i.total}&status=watching'">SYNC</button>
+                            <button class="btn" style="padding:8px 12px; font-size:9px; border-color:#8b949e; color:#8b949e;" onclick="location.href='/save?title=\${encodeURIComponent(i.title)}&id=\${i.id}&poster=\${encodeURIComponent(i.poster_path)}&type=\${i.media_type}&source=\${i.source}&total=\${i.total}&status=planned'">PLAN</button>
+                        </div>
                     </div>
                 \`).join('');
-                resDiv.innerHTML = html || '<p style="padding:10px;">No signal.</p>';
+                resDiv.innerHTML = html || '<p style="padding:20px;">No signal detected.</p>';
             }
             async function updateEp(id, action){
                 await fetch('/api/update/'+id+'?action='+action);
                 location.reload();
             }
-            async function loadSchedule() {
-                const r = await fetch('/api/schedule');
-                const d = await r.json();
-                document.getElementById('schedule-bar').innerHTML = d.map(item => \`
-                    <div class="chrono-item \${item.status === 'today' ? 'chrono-today' : ''}">\${item.title} • \${item.time}</div>
-                \`).join('');
+        </script>
+    </body></html>`);
+});
+
+// --- NEW PAGE: PLAN TO WATCH ---
+app.get('/plan-to-watch', async (req, res) => {
+    const list = await getWatchlist();
+    const planned = list.filter(s => s.status === 'planned');
+    
+    const renderPlannedCard = (s) => {
+        let posterUrl = s.poster;
+        if (posterUrl && !posterUrl.startsWith('http')) posterUrl = `https://image.tmdb.org/t/p/w500${posterUrl}`;
+        return `
+        <div class="glass" style="padding:10px; position:relative;">
+            <img src="${posterUrl}" style="width:100%; height:240px; object-fit:cover; border-radius:12px; filter: grayscale(0.4);">
+            <div style="padding:10px;">
+                <h4 style="font-size:13px; margin:5px 0; font-weight:600;">${s.title}</h4>
+                <button class="btn" style="width:100%; margin-top:10px;" onclick="startSync('${s.id}')">START SYNC</button>
+            </div>
+        </div>`;
+    };
+
+    res.send(`<html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            ${HUD_STYLE}
+        </head>
+        <body>
+        ${NAV_COMPONENT}
+        <div style="padding:20px; max-width:1400px; margin:auto; padding-top:80px;">
+            <h1 style="font-size:24px; margin:0 0 10px 0; font-weight:900;">PLAN TO <span class="accent-text">WATCH</span></h1>
+            <p style="opacity:0.5; font-size:12px; margin-bottom:40px;">FUTURE LOGS & UPCOMING INTEL</p>
+            <div class="poster-grid">
+                ${planned.map(s => renderPlannedCard(s)).join('')}
+                ${planned.length === 0 ? '<div style="grid-column: 1/-1; text-align:center; padding:100px; opacity:0.3;">Archive Empty. Add from Search.</div>' : ''}
+            </div>
+        </div>
+        <script>
+            async function startSync(id) {
+                await fetch('/api/update-status/'+id+'?status=watching');
+                location.href = '/watchlist';
             }
-            loadSchedule();
         </script>
     </body></html>`);
 });
@@ -315,54 +344,53 @@ app.get('/show/:type/:id', async (req, res) => {
     res.send(`<html>
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-            <link rel="manifest" href="/manifest.json">
             ${HUD_STYLE}
         </head>
         <body>
         ${NAV_COMPONENT}
         <div class="split-view" style="padding-top:40px;">
             <div class="side-panel">
-                <img src="${displayPoster}" style="width:100%; border-radius:12px; margin-bottom:20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
-                <h1 style="font-size:20px; margin:0 0 10px 0;">${local?.title || data.title}</h1>
-                <p style="font-size:13px; opacity:0.6; line-height:1.5; margin-bottom:20px;">${data.overview?.substring(0, 250)}...</p>
+                <img src="${displayPoster}" style="width:100%; border-radius:18px; margin-bottom:25px; box-shadow: 0 20px 40px rgba(0,0,0,0.6);">
+                <h1 style="font-size:22px; margin:0 0 12px 0; font-weight:800;">${local?.title || data.title}</h1>
+                <p style="font-size:14px; opacity:0.5; line-height:1.6; margin-bottom:30px;">${data.overview?.substring(0, 300)}...</p>
                 
-                <div style="display:flex; flex-wrap:wrap; justify-content:center; margin-bottom:20px;">
+                <div style="display:flex; flex-wrap:wrap; justify-content:center; margin-bottom:30px; background:rgba(0,0,0,0.2); padding:15px; border-radius:15px;">
                     ${[1,2,3,4,5,6,7,8,9,10].map(n => `<button class="rating-orb ${local?.personalRating==n?'active':''}" onclick="setRating(${n})">${n}</button>`).join('')}
                 </div>
                 
-                <div style="display:flex; gap:10px;">
+                <div style="display:flex; gap:12px;">
                     <button onclick="location.href='/watchlist'" class="btn" style="flex:1;">Vault</button>
-                    <button onclick="purgeShow()" class="btn" style="border-color:var(--red); color:var(--red);">Delete</button>
+                    <button onclick="purgeShow()" class="btn" style="border-color:var(--red); color:var(--red);">Purge</button>
                 </div>
             </div>
             <div class="main-panel">
-                <div class="glass" style="padding:20px; margin-bottom:20px;">
-                    <div id="chat-win" style="height:120px; overflow-y:auto; font-size:13px; margin-bottom:15px; border-bottom:1px solid var(--border); padding-bottom:10px;">
-                        <div style="color:var(--accent);">VANTAGE: Waiting for command...</div>
+                <div class="glass" style="padding:25px; margin-bottom:25px;">
+                    <div id="chat-win" style="height:180px; overflow-y:auto; font-size:14px; margin-bottom:20px; border-bottom:1px solid var(--border); padding-bottom:15px;">
+                        <div style="color:var(--accent); font-weight:bold;">VANTAGE: Systems Active. Standing by for Intel request.</div>
                     </div>
-                    <div style="display:flex; gap:10px; position:relative;">
+                    <div style="display:flex; gap:12px; position:relative;">
                         <input id="chat-in" class="input-field" placeholder="Ask Vantage..." onkeyup="if(event.key==='Enter') chat()">
-                        <button onclick="startVoiceInput(event)" class="mic-btn" style="position:absolute; right:70px; top:8px;">🎤</button>
+                        <button onclick="startVoiceInput(event)" class="mic-btn" style="position:absolute; right:100px; top:12px;">🎤</button>
                         <button class="btn" onclick="chat()">Send</button>
                     </div>
                 </div>
 
-                <div class="glass" style="padding:20px;">
-                    <textarea id="logText" class="input-field" style="height:100px; margin-bottom:15px;" placeholder="Entry log..."></textarea>
+                <div class="glass" style="padding:25px;">
+                    <textarea id="logText" class="input-field" style="height:120px; margin-bottom:20px; resize:none;" placeholder="Log your observations..."></textarea>
                     <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <span style="font-size:12px;">EP</span>
-                            <input id="ep" type="number" value="${local?.currentEpisode || 0}" class="input-field" style="width:60px; padding:5px;">
+                        <div style="display:flex; align-items:center; gap:12px;">
+                            <span style="font-size:11px; font-weight:bold; letter-spacing:1px; opacity:0.6;">EPISODE</span>
+                            <input id="ep" type="number" value="${local?.currentEpisode || 0}" class="input-field" style="width:70px; text-align:center;">
                         </div>
-                        <button class="btn" onclick="saveLog()">Archive Entry</button>
+                        <button class="btn" onclick="saveLog()">Record Entry</button>
                     </div>
                 </div>
 
-                <div id="log-list" style="margin-top:20px;">
+                <div id="log-list" style="margin-top:30px;">
                     ${Object.keys(logs).sort((a,b)=>b-a).map(ep => `
-                        <div class="glass" style="padding:15px; margin-bottom:10px; border-left:3px solid var(--accent);">
-                            <div style="font-size:11px; color:var(--accent); margin-bottom:5px;">EPISODE ${ep} • ${logs[ep].date}</div>
-                            <div style="font-size:13px; line-height:1.4;">${logs[ep].text}</div>
+                        <div class="glass" style="padding:20px; margin-bottom:15px; border-left:4px solid var(--accent);">
+                            <div style="font-size:10px; color:var(--accent); font-weight:900; margin-bottom:8px; letter-spacing:1px;">ENTRY EP\${ep} // \${logs[ep].date}</div>
+                            <div style="font-size:14px; line-height:1.6; opacity:0.9;">\${logs[ep].text}</div>
                         </div>`).join('')}
                 </div>
             </div>
@@ -380,10 +408,10 @@ app.get('/show/:type/:id', async (req, res) => {
                 const inp = document.getElementById('chat-in');
                 const win = document.getElementById('chat-win');
                 if(!inp.value) return;
-                win.innerHTML += '<div><b>USER:</b> '+inp.value+'</div>';
+                win.innerHTML += '<div style="margin-bottom:10px;"><b>USER:</b> '+inp.value+'</div>';
                 const r = await fetch('/api/vantage-chat/${id}', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:inp.value})});
                 const d = await r.json();
-                win.innerHTML += '<div style="color:var(--accent);"><b>VANTAGE:</b> '+d.response+'</div>';
+                win.innerHTML += '<div style="color:var(--accent); margin-bottom:15px;"><b>VANTAGE:</b> '+d.response+'</div>';
                 inp.value = ''; win.scrollTop = win.scrollHeight;
             }
             function purgeShow(){ if(confirm('Erase from archive?')) location.href='/api/delete-show/${id}'; }
@@ -391,26 +419,7 @@ app.get('/show/:type/:id', async (req, res) => {
     </body></html>`);
 });
 
-// --- API ROUTES RETAINED ---
-app.get('/api/schedule', async (req, res) => {
-    const watchlist = await getWatchlist();
-    const results = [];
-    const animeIds = watchlist.filter(s => s.source === 'mal').map(s => s.id);
-    if (animeIds.length > 0) {
-        try {
-            const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-            const today = days[new Date().getDay()];
-            const schedRes = await axios.get(`https://api.jikan.moe/v4/schedules?filter=${today}`);
-            schedRes.data.data.forEach(a => {
-                if(animeIds.includes(a.mal_id.toString())) {
-                    results.push({ title: a.title, time: a.broadcast.time || "TBA", type: 'anime', status: 'today' });
-                }
-            });
-        } catch (e) { console.log("Jikan Fail"); }
-    }
-    res.json(results);
-});
-
+// --- API ROUTES (STABILIZED) ---
 app.get('/api/search', async (req, res) => {
     try {
         const malRes = await axios.get(`https://api.jikan.moe/v4/anime?q=${req.query.q}&limit=5`).catch(()=>({data:{data:[]}}));
@@ -428,13 +437,14 @@ app.get('/api/search', async (req, res) => {
 });
 
 app.get('/save', async (req, res) => {
-    const { id, title, poster, type, source, total } = req.query;
+    const { id, title, poster, type, source, total, status } = req.query;
     await saveWatchlist({ 
         id, title: decodeURIComponent(title), poster: decodeURIComponent(poster), 
         type, source, currentEpisode: 0, totalEpisodes: parseInt(total) || 12, 
+        status: status || 'watching',
         logs: {}, personalRating: 0, startDate: new Date().toISOString() 
     });
-    res.redirect('/watchlist');
+    res.redirect(status === 'planned' ? '/plan-to-watch' : '/watchlist');
 });
 
 app.get('/api/update/:id', async (req, res) => {
@@ -445,6 +455,11 @@ app.get('/api/update/:id', async (req, res) => {
         await show.save();
         res.json({ success: true });
     } else { res.json({ success: false }); }
+});
+
+app.get('/api/update-status/:id', async (req, res) => {
+    await Show.findOneAndUpdate({ id: req.params.id }, { status: req.query.status });
+    res.json({ success: true });
 });
 
 app.post('/api/journal/:id', async (req, res) => {
