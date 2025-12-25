@@ -259,123 +259,171 @@ app.get('/watchlist', async (req, res) => {
     </body></html>`);
 });
 
-// --- THE UNIVERSAL RADAR v10.1 (INTELLIGENCE PATCH) ---
 app.get('/chrono-sync', async (req, res) => {
     try {
         const list = await getWatchlist();
         const targetStatuses = ['watching', 'planned', 'completed'];
         const vaultItems = list.filter(s => targetStatuses.includes(s.status));
         
-        let schedules = [];
-
-        for (const show of vaultItems) {
+        const now = new Date();
+        const schedules = await Promise.all(vaultItems.map(async (show) => {
+            // --- STEP 1: INITIALIZE BASE INTEL ---
             let intel = {
                 id: show.id,
                 title: show.title || "Unknown Asset",
                 poster: show.poster || "",
-                subLabel: show.status === 'planned' ? "ON RADAR" : "SYNCING...",
-                badge: show.status === 'completed' ? "LEGEND" : show.status.toUpperCase(),
-                sortWeight: 100,
-                timeframe: "" 
+                subLabel: "DECRYPTING...",
+                badge: show.status.toUpperCase(),
+                sortWeight: 50, // Neutral start
+                timeframe: "",
+                type: show.type || 'tv'
             };
 
+            // Poster URL Sanitization
             if (intel.poster && !intel.poster.startsWith('http')) {
                 intel.poster = `https://image.tmdb.org/t/p/w500${intel.poster}`;
             }
 
             try {
+                // --- STEP 2: MULTIVERSE DATA ACQUISITION ---
+                const cleanId = show.id.toString().split('_')[0];
+                
                 if (show.source === 'mal' || show.type === 'anime') {
-                    const cleanId = show.id.toString().split('_')[0];
-                    const response = await fetch(`https://api.jikan.moe/v4/anime/${cleanId}`);
-                    const { data: anime } = await response.json();
-                    
-                    if (anime) {
-                        intel.title = anime.title_english || anime.title;
+                    const r = await fetch(`https://api.jikan.moe/v4/anime/${cleanId}`);
+                    const { data: a } = await r.json();
+                    if (a) {
+                        intel.title = a.title_english || a.title;
                         
-                        // OPM 3 SPECIAL INTEL
-                        if (intel.title.includes("One Punch Man") && intel.title.includes("3")) {
-                            intel.timeframe = "OCT 12, 2025 — DEC 28, 2025";
-                            intel.subLabel = "Sundays @ TV Tokyo";
+                        // Universal Anime Logic
+                        if (a.status === "Currently Airing") {
                             intel.badge = "LIVE";
+                            intel.subLabel = a.broadcast?.string || "Airing Weekly";
                             intel.sortWeight = 1;
-                        } else if (anime.status === "Currently Airing") {
-                            intel.badge = "AIRING";
-                            intel.subLabel = anime.broadcast?.string || "Weekly Uplink";
-                            intel.sortWeight = 2;
-                        } else if (anime.status === "Finished Airing") {
-                            // Fix for Frieren S1 / Finished Anime
-                            intel.subLabel = "ARCHIVE COMPLETE";
-                            intel.badge = "VAULT";
-                            intel.sortWeight = 150;
-                        } else if (anime.status === "Not yet aired") {
-                            // Fix for Frieren S2 / The Rip (Anime)
-                            intel.subLabel = "DEEP SPACE RADAR";
-                            intel.badge = "TBA";
-                            intel.sortWeight = 50;
+                        } else if (a.status === "Not yet aired") {
+                            intel.badge = "UPCOMING";
+                            const pDate = a.aired?.from ? new Date(a.aired.from).toLocaleDateString() : "TBA";
+                            intel.subLabel = `PREMIERE: ${pDate}`;
+                            intel.sortWeight = 10;
+                        } else {
+                            // Finished Anime (Frieren S1, etc)
+                            intel.badge = "FINISHED";
+                            intel.subLabel = `${a.episodes} Episodes Total`;
+                            intel.sortWeight = 100;
                         }
                     }
                 } else {
-                    // TMDB (Lupin, Chernobyl, etc.)
-                    const cleanId = show.id.toString().split('_')[0];
+                    // Western Media Logic (TMDB)
                     const tmdbUrl = `https://api.themoviedb.org/3/tv/${cleanId}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`;
                     const data = await fetch(tmdbUrl).then(r => r.json());
                     
                     if (data.name) {
                         intel.title = data.name;
                         if (data.next_episode_to_air) {
+                            const air = data.next_episode_to_air;
                             intel.badge = "LIVE";
-                            intel.subLabel = `Next: S${data.next_episode_to_air.season_number}E${data.next_episode_to_air.episode_number}`;
+                            intel.subLabel = `S${air.season_number}E${air.episode_number} • ${new Date(air.air_date).toLocaleDateString()}`;
                             intel.sortWeight = 0;
-                        } else if (data.status === "Ended" || data.status === "Canceled") {
-                            // Fix for Lupin / Chernobyl / Finished Western
-                            intel.subLabel = "FULL MISSION LOGS";
-                            intel.badge = "SERIES";
-                            intel.sortWeight = 160;
-                        } else if (data.status === "Returning Series" || data.in_production) {
-                            intel.subLabel = "PRODUCTION ACTIVE";
-                            intel.badge = "NEXT";
-                            intel.sortWeight = 10;
+                        } else if (data.status === "In Production" || data.status === "Returning Series") {
+                            intel.badge = "STAGING";
+                            intel.subLabel = "New Episodes Confirmed";
+                            intel.sortWeight = 20;
+                        } else {
+                            // Ended shows (Chernobyl, etc)
+                            intel.badge = "LEGACY";
+                            intel.subLabel = "Complete Series";
+                            intel.sortWeight = 150;
                         }
                     }
                 }
-            } catch (e) { console.log("Radar skip:", intel.title); }
+            } catch (err) {
+                intel.subLabel = "UPLINK_OFFLINE";
+                intel.badge = "VAULT";
+            }
 
-            if (show.status === 'completed') intel.sortWeight = 200;
-            schedules.push(intel);
-        }
+            // --- STEP 3: MASTER OVERRIDES ---
+            // If the user marked it 'completed' (Hall of Fame), it always goes to the bottom
+            if (show.status === 'completed') {
+                intel.badge = "LEGEND";
+                intel.sortWeight = 1000;
+            }
+            
+            // If it's a 'planned' show with no air date yet
+            if (show.status === 'planned' && intel.sortWeight > 50) {
+                intel.badge = "SCOUT";
+                intel.subLabel = "Monitoring for Dates...";
+            }
 
+            return intel;
+        }));
+
+        // Sort by priority (Live first, Then Upcoming, Then Scout, Then Legacy)
         const sorted = schedules.sort((a, b) => a.sortWeight - b.sortWeight);
 
         res.send(`<html>
             <head>${HUD_STYLE}</head>
-            <body style="background:#050505; color:white;">
+            <body style="background:#020202; color:#fff; font-family:sans-serif;">
                 ${NAV_COMPONENT}
-                <div style="padding:100px 40px; max-width:1200px; margin:auto;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:40px;">
-                        <h1 style="font-weight:900; margin:0; letter-spacing:-1px;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
-                        <div style="font-size:10px; font-family:monospace; opacity:0.4; letter-spacing:1px;">UPLINK_STABLE // SYSTEM_v10.1</div>
+                <div style="padding:100px 40px; max-width:1400px; margin:auto;">
+                    
+                    <div style="display:flex; justify-content:space-between; align-items:flex-end; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:20px; margin-bottom:40px;">
+                        <div>
+                            <h1 style="font-size:35px; font-weight:900; margin:0; letter-spacing:-1.5px;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
+                            <p style="font-family:monospace; font-size:10px; opacity:0.5; margin:5px 0 0 0;">SYSTEM TIME: ${now.toLocaleString()} // NODES_ACTIVE: ${sorted.length}</p>
+                        </div>
+                        <div style="display:flex; gap:20px; font-size:10px; font-family:monospace; letter-spacing:1px;">
+                            <span style="color:var(--accent);">● LIVE</span>
+                            <span style="color:#f0ad4e;">● UPCOMING</span>
+                            <span style="color:#888;">● LEGACY</span>
+                        </div>
                     </div>
-                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:30px;">
+
+                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:35px;">
                         ${sorted.map(s => `
-                            <a href="/show/${s.type || 'tv'}/${s.id}" style="text-decoration:none; color:inherit;">
-                                <div class="glass" style="border-radius:15px; overflow:hidden; border:1px solid rgba(255,255,255,0.05); transition:0.3s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.05)'">
-                                    <div style="position:relative; aspect-ratio:2/3;">
+                            <div class="glass" style="border-radius:20px; overflow:hidden; border:1px solid rgba(255,255,255,0.03); transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), border 0.3s;" onmouseover="this.style.transform='scale(1.03)'; this.style.borderColor='var(--accent)';" onmouseout="this.style.transform='scale(1)'; this.style.borderColor='rgba(255,255,255,0.03)';">
+                                <a href="/show/${s.type}/${s.id}" style="text-decoration:none; color:inherit;">
+                                    <div style="position:relative; aspect-ratio:2/3; overflow:hidden;">
                                         <img src="${s.poster}" style="width:100%; height:100%; object-fit:cover;">
-                                        <div style="position:absolute; top:12px; right:12px; background:var(--accent); color:black; font-weight:900; padding:4px 10px; font-size:10px; border-radius:4px; box-shadow:0 4px 10px rgba(0,0,0,0.5);">${s.badge}</div>
+                                        
+                                        <div style="position:absolute; top:15px; right:15px; background:${getBadgeColor(s.badge)}; color:black; font-weight:900; padding:5px 12px; font-size:10px; border-radius:6px; box-shadow:0 8px 20px rgba(0,0,0,0.6);">${s.badge}</div>
+                                        
+                                        ${s.sortWeight > 100 ? `<div style="position:absolute; inset:0; background:rgba(0,0,0,0.4); pointer-events:none;"></div>` : ''}
                                     </div>
-                                    <div style="padding:15px; background:rgba(255,255,255,0.02);">
-                                        <div style="font-weight:bold; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:14px;">${s.title}</div>
-                                        <div style="color:var(--accent); font-family:monospace; font-size:10px; margin-top:5px; font-weight:bold; text-transform:uppercase;">${s.subLabel}</div>
-                                        ${s.timeframe ? `<div style="font-size:9px; opacity:0.4; margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.1); font-family:monospace;">${s.timeframe}</div>` : ''}
+
+                                    <div style="padding:20px; background:linear-gradient(to bottom, rgba(255,255,255,0.03), transparent);">
+                                        <div style="font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:15px; margin-bottom:6px;">${s.title}</div>
+                                        <div style="color:var(--accent); font-family:monospace; font-size:11px; font-weight:bold; display:flex; align-items:center; gap:6px;">
+                                            <span style="width:6px; height:6px; background:var(--accent); border-radius:50%; display:inline-block; animation: pulse 2s infinite;"></span>
+                                            ${s.subLabel}
+                                        </div>
                                     </div>
-                                </div>
-                            </a>
+                                </a>
+                            </div>
                         `).join('')}
                     </div>
                 </div>
+                <style>
+                    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+                </style>
             </body></html>`);
-    } catch (err) { res.status(500).send("Critical System Error"); }
+    } catch (err) { 
+        console.error(err);
+        res.status(500).send("System Critical Failure: Radar Down."); 
+    }
 });
+
+// Helper Function for Batman-Level UI consistency
+function getBadgeColor(badge) {
+    const colors = {
+        'LIVE': 'var(--accent)',
+        'AIRING': 'var(--accent)',
+        'UPCOMING': '#f0ad4e',
+        'STAGING': '#5bc0de',
+        'LEGEND': 'var(--gold)',
+        'VAULT': '#888',
+        'LEGACY': '#444'
+    };
+    return colors[badge] || '#ddd';
+}
 
 
 
