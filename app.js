@@ -259,36 +259,35 @@ app.get('/watchlist', async (req, res) => {
     </body></html>`);
 });
 
+
 // --- RADAR CACHE SYSTEM ---
 const RADAR_CACHE = new Map();
-const CACHE_DURATION = 1000 * 60 * 60 * 6; // 6 Hours
+const CACHE_DURATION = 1000 * 60 * 60 * 12; // 12 Hours
 
 app.get('/chrono-sync', async (req, res) => {
     try {
         const list = await getWatchlist();
-        
-        // --- FIX 1: HALL OF FAME ISOLATION ---
-        // We only track 'watching' and 'planned'. 'Completed' is removed to save resources.
+        // Remove Hall of Fame to keep things lean
         const targetStatuses = ['watching', 'planned'];
         const vaultItems = list.filter(s => targetStatuses.includes(s.status));
         
-        const now = new Date();
         const schedules = await Promise.all(vaultItems.map(async (show) => {
             const cacheKey = `radar_${show.id}`;
             const cachedEntry = RADAR_CACHE.get(cacheKey);
 
+            // If it's in cache and marked as a finished product, never re-fetch.
             if (cachedEntry) {
-                const isFinished = ["LEGACY", "FINISHED"].includes(cachedEntry.intel.badge);
-                const isExpired = (Date.now() - cachedEntry.timestamp > CACHE_DURATION);
-                if (isFinished || !isExpired) return cachedEntry.intel;
+                const isFinal = ["LEGACY", "FINISHED", "MOVIE"].includes(cachedEntry.intel.badge);
+                if (isFinal || (Date.now() - cachedEntry.timestamp < CACHE_DURATION)) {
+                    return cachedEntry.intel;
+                }
             }
 
-            // --- STEP 1: INITIALIZE BASE INTEL ---
             let intel = {
                 id: show.id,
                 title: show.title || "Unknown Asset",
                 poster: show.poster || "",
-                subLabel: "VAULT_DATA",
+                subLabel: "SYNCING...",
                 badge: show.status.toUpperCase(),
                 sortWeight: 50,
                 type: show.type || 'tv'
@@ -300,10 +299,9 @@ app.get('/chrono-sync', async (req, res) => {
 
             try {
                 const cleanId = show.id.toString().split('_')[0];
-                
-                // --- FIX 2: THE ANIME-FIRST HYBRID ---
+
                 if (show.source === 'mal' || show.type === 'anime') {
-                    // Anime remains ACTIVE (High Precision Tracking)
+                    // --- ANIME LOGIC (JIKAN) ---
                     const r = await fetch(`https://api.jikan.moe/v4/anime/${cleanId}`);
                     const { data: a } = await r.json();
                     if (a) {
@@ -318,32 +316,42 @@ app.get('/chrono-sync', async (req, res) => {
                             intel.sortWeight = 10;
                         } else {
                             intel.badge = "FINISHED";
-                            intel.subLabel = `${a.episodes || '?'} Episodes Total`;
-                            intel.sortWeight = 100;
+                            intel.subLabel = "Complete Series";
+                            intel.sortWeight = 150;
                         }
                     }
                 } else {
-                    // Western Media becomes PASSIVE (No Deep-Scan/No Decrypting)
-                    // We only do a light check if it's 'watching'. If 'planned', we just show Vault info.
-                    if (show.status === 'watching') {
-                        const tmdbUrl = `https://api.themoviedb.org/3/tv/${cleanId}?api_key=${process.env.TMDB_API_KEY}`;
-                        const data = await fetch(tmdbUrl).then(r => r.json());
-                        intel.title = data.name || intel.title;
-                        intel.badge = "SAVORING";
-                        intel.subLabel = data.status === "Ended" ? "Complete Series" : "In Production";
-                        intel.sortWeight = 5;
-                    } else {
-                        // Planned Western shows are silent (The Batman Approach)
-                        intel.badge = "ON RADAR";
-                        intel.subLabel = "Passive Tracking";
-                        intel.sortWeight = 200;
+                    // --- WESTERN LOGIC (TMDB SMART-SCAN) ---
+                    const tmdbUrl = `https://api.themoviedb.org/3/tv/${cleanId}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`;
+                    const data = await fetch(tmdbUrl).then(r => r.json());
+
+                    if (data.name) {
+                        intel.title = data.name;
+                        
+                        if (data.next_episode_to_air) {
+                            const air = data.next_episode_to_air;
+                            intel.badge = "LIVE";
+                            intel.subLabel = `Next: S${air.season_number}E${air.episode_number} • ${new Date(air.air_date).toLocaleDateString()}`;
+                            intel.sortWeight = 0;
+                        } else if (data.status === "Ended" || data.status === "Canceled") {
+                            intel.badge = "LEGACY";
+                            intel.subLabel = "Complete Series";
+                            intel.sortWeight = 200;
+                        } else if (data.in_production || data.status === "Returning Series") {
+                            intel.badge = "NEXT";
+                            intel.subLabel = "Production Active";
+                            intel.sortWeight = 20;
+                        } else {
+                            intel.badge = "MOVIE";
+                            intel.subLabel = data.release_date ? `Released ${data.release_date.split('-')[0]}` : "Feature Film";
+                            intel.sortWeight = 250;
+                        }
                     }
                 }
 
                 RADAR_CACHE.set(cacheKey, { intel, timestamp: Date.now() });
-
             } catch (err) {
-                intel.subLabel = "OFFLINE_VAULT";
+                intel.subLabel = "UPLINK_OFFLINE";
             }
 
             return intel;
@@ -356,19 +364,17 @@ app.get('/chrono-sync', async (req, res) => {
             <body style="background:#020202; color:#fff; font-family:sans-serif;">
                 ${NAV_COMPONENT}
                 <div style="padding:100px 40px; max-width:1400px; margin:auto;">
-                    
                     <div style="display:flex; justify-content:space-between; align-items:flex-end; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:20px; margin-bottom:40px;">
                         <div>
                             <h1 style="font-size:35px; font-weight:900; margin:0; letter-spacing:-1.5px;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
-                            <p style="font-family:monospace; font-size:10px; opacity:0.5; margin:5px 0 0 0;">SYSTEM TIME: ${now.toLocaleString()} // ACTIVE_NODES: ${sorted.length}</p>
+                            <p style="font-family:monospace; font-size:10px; opacity:0.5; margin:5px 0 0 0;">SMART_HYBRID_CORE // NODES: ${sorted.length}</p>
                         </div>
                         <div style="display:flex; gap:20px; font-size:10px; font-family:monospace; letter-spacing:1px;">
-                            <span style="color:var(--accent);">● ACTIVE</span>
+                            <span style="color:var(--accent);">● LIVE</span>
                             <span style="color:#f0ad4e;">● UPCOMING</span>
-                            <span style="color:#555;">● PASSIVE</span>
+                            <span style="color:#666;">● ARCHIVE</span>
                         </div>
                     </div>
-
                     <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:35px;">
                         ${sorted.map(s => `
                             <div class="glass" style="border-radius:20px; overflow:hidden; border:1px solid rgba(255,255,255,0.03); transition: 0.3s;" onmouseover="this.style.borderColor='var(--accent)';" onmouseout="this.style.borderColor='rgba(255,255,255,0.03)';">
@@ -376,13 +382,12 @@ app.get('/chrono-sync', async (req, res) => {
                                     <div style="position:relative; aspect-ratio:2/3; overflow:hidden;">
                                         <img src="${s.poster}" style="width:100%; height:100%; object-fit:cover;">
                                         <div style="position:absolute; top:15px; right:15px; background:${getBadgeColor(s.badge)}; color:black; font-weight:900; padding:5px 12px; font-size:10px; border-radius:6px; box-shadow:0 8px 20px rgba(0,0,0,0.6);">${s.badge}</div>
-                                        ${s.sortWeight >= 100 ? `<div style="position:absolute; inset:0; background:rgba(0,0,0,0.5); pointer-events:none;"></div>` : ''}
+                                        ${s.sortWeight >= 150 ? `<div style="position:absolute; inset:0; background:rgba(0,0,0,0.5); pointer-events:none;"></div>` : ''}
                                     </div>
-
-                                    <div style="padding:20px; background:linear-gradient(to bottom, rgba(255,255,255,0.03), transparent);">
+                                    <div style="padding:20px;">
                                         <div style="font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:15px; margin-bottom:6px;">${s.title}</div>
                                         <div style="color:var(--accent); font-family:monospace; font-size:11px; font-weight:bold; display:flex; align-items:center; gap:6px;">
-                                            <span style="width:6px; height:6px; background:var(--accent); border-radius:50%; display:inline-block; ${s.sortWeight < 100 ? 'animation: pulse 2s infinite;' : ''}"></span>
+                                            <span style="width:6px; height:6px; background:var(--accent); border-radius:50%; display:inline-block; ${s.sortWeight < 150 ? 'animation: pulse 2s infinite;' : ''}"></span>
                                             ${s.subLabel}
                                         </div>
                                     </div>
@@ -395,15 +400,13 @@ app.get('/chrono-sync', async (req, res) => {
                     @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
                 </style>
             </body></html>`);
-    } catch (err) { 
-        res.status(500).send("Critical Radar Failure."); 
-    }
+    } catch (err) { res.status(500).send("System Error."); }
 });
 
 function getBadgeColor(badge) {
     const colors = {
-        'LIVE': 'var(--accent)', 'UPCOMING': '#f0ad4e', 'SAVORING': '#5bc0de',
-        'ON RADAR': '#444', 'FINISHED': '#444'
+        'LIVE': 'var(--accent)', 'UPCOMING': '#f0ad4e', 'NEXT': '#5bc0de',
+        'LEGACY': '#444', 'FINISHED': '#444', 'MOVIE': '#222'
     };
     return colors[badge] || '#ddd';
 }
