@@ -259,118 +259,127 @@ app.get('/watchlist', async (req, res) => {
     </body></html>`);
 });
 
-// --- THE UNIVERSAL RADAR v6.0 (TEMPORAL GROUPING) ---
+// --- THE UNIVERSAL RADAR v7.0 (VAULT-FIRST PERSISTENCE) ---
 app.get('/chrono-sync', async (req, res) => {
     try {
         res.set('Cache-Control', 'public, max-age=300');
         const list = await getWatchlist();
+        
+        // We pull EVERYTHING from these three categories to ensure no "missing" shows
         const targetStatuses = ['watching', 'plan-to-watch', 'hall-of-fame'];
         const vaultItems = list.filter(s => targetStatuses.includes(s.status));
         const forceRefresh = req.query.refresh === 'true';
 
         const now = new Date();
         const schedules = await Promise.all(vaultItems.map(async (show) => {
-            try {
-                // FALLBACKS TO KILL "UNDEFINED"
-                let title = show.title || "Unknown Asset";
-                let poster = show.poster || show.image || "";
-                let subLabel = "Status: Unknown";
-                let badge = "";
-                let sortWeight = 999; // Lower is sooner
+            // BASE DATA (Always use vault data as the fallback to prevent "undefined")
+            let intel = {
+                title: show.title || "Unknown Asset",
+                poster: show.poster || show.image || show.imageUrl || "",
+                subLabel: "Awaiting Schedule...",
+                badge: "TBA",
+                sortWeight: 100,
+                isLegend: show.status === 'hall-of-fame',
+                isActive: show.status === 'watching'
+            };
 
+            try {
                 if (show.type === 'anime') {
-                    let malId = show.malId;
-                    if (!malId || forceRefresh) {
-                        const search = await fetch(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(title)}&limit=1`).then(r => r.json());
-                        malId = search.data?.[0]?.mal_id;
-                    }
+                    const malId = show.malId || (await fetch(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(intel.title)}&limit=1`).then(r => r.json())).data?.[0]?.mal_id;
                     const malData = await fetch(`https://api.jikan.moe/v4/anime/${malId}/full`).then(r => r.json());
                     const anime = malData.data;
-                    
-                    title = anime.title_english || anime.title || title;
-                    poster = anime.images.jpg.large_image_url || poster;
-                    
-                    if (anime.status === "Currently Airing") {
-                        subLabel = anime.broadcast?.string || "Airing Weekly";
-                        badge = "LIVE";
-                        sortWeight = 1;
-                    } else if (anime.status === "Not yet aired") {
-                        subLabel = anime.aired?.from ? `Starts: ${new Date(anime.aired.from).toLocaleDateString()}` : "Upcoming Season";
-                        badge = "NEXT";
-                        sortWeight = 20;
-                    } else if (show.status === 'watching') {
-                        subLabel = "Catch-up Mode";
-                        badge = "ACTIVE";
-                        sortWeight = 50;
-                    } else { return null; }
+
+                    if (anime) {
+                        intel.title = anime.title_english || anime.title || intel.title;
+                        intel.poster = anime.images?.jpg?.large_image_url || intel.poster;
+                        
+                        if (anime.status === "Currently Airing") {
+                            intel.subLabel = anime.broadcast?.string || "Airing Weekly";
+                            intel.badge = "LIVE";
+                            intel.sortWeight = 1;
+                        } else if (anime.status === "Not yet aired") {
+                            intel.subLabel = anime.aired?.from ? `Premiere: ${new Date(anime.aired.from).toLocaleDateString()}` : "Upcoming Season";
+                            intel.badge = "NEXT";
+                            intel.sortWeight = 20;
+                        }
+                    }
                 } else {
-                    // TMDB WESTERN LOGIC
+                    // TMDB Logic for Chernobyl / The Rip
                     const tmdbType = (show.type === 'movie') ? 'movie' : 'tv';
                     const tmdbUrl = `https://api.themoviedb.org/3/${tmdbType}/${show.tmdbId || show.id}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`;
                     const data = await fetch(tmdbUrl).then(r => r.json());
-                    
-                    title = data.name || data.title || title;
-                    poster = `https://image.tmdb.org/t/p/w500${data.poster_path}` || poster;
 
-                    if (data.next_episode_to_air) {
-                        const airDate = new Date(data.next_episode_to_air.air_date);
-                        subLabel = `S${data.next_episode_to_air.season_number}E${data.next_episode_to_air.episode_number} (${data.next_episode_to_air.air_date})`;
-                        badge = (airDate.toDateString() === now.toDateString()) ? "TODAY" : "NEXT";
-                        sortWeight = (badge === "TODAY") ? 0 : 2;
-                    } else if (data.status === 'In Production' || data.status === 'Returning Series') {
-                        subLabel = "In Production";
-                        badge = "TBA";
-                        sortWeight = 30;
-                    } else if (show.status === 'watching') {
-                        subLabel = "Active Sync";
-                        badge = "LIVE";
-                        sortWeight = 5;
-                    } else { return null; }
+                    if (data) {
+                        intel.title = data.name || data.title || intel.title;
+                        if (data.poster_path) intel.poster = `https://image.tmdb.org/t/p/w500${data.poster_path}`;
+
+                        if (data.next_episode_to_air) {
+                            intel.subLabel = `S${data.next_episode_to_air.season_number}E${data.next_episode_to_air.episode_number} (${data.next_episode_to_air.air_date})`;
+                            const airDate = new Date(data.next_episode_to_air.air_date);
+                            intel.badge = (airDate.toDateString() === now.toDateString()) ? "TODAY" : "NEXT";
+                            intel.sortWeight = (intel.badge === "TODAY") ? 0 : 2;
+                        } else if (data.status === 'In Production' || data.in_production) {
+                            intel.subLabel = "Confirmed: In Production";
+                            intel.badge = "TBA";
+                            intel.sortWeight = 30;
+                        }
+                    }
                 }
+            } catch (e) { console.error("API Skip for", intel.title); }
 
-                return { title, poster, subLabel, badge, sortWeight, isLegend: show.status === 'hall-of-fame' };
-            } catch (e) { return null; }
+            // FINAL OVERRIDE: If you are actively watching it, make sure it has a high-visibility weight
+            if (intel.isActive && intel.sortWeight > 5) {
+                intel.sortWeight = 5;
+                intel.badge = "ACTIVE";
+                intel.subLabel = intel.subLabel === "Awaiting Schedule..." ? "Active Sync Session" : intel.subLabel;
+            }
+
+            return intel;
         }));
 
-        const activeTimelines = schedules.filter(s => s !== null).sort((a, b) => a.sortWeight - b.sortWeight);
+        // Temporal Grouping for the "Calendar" look
+        const today = schedules.filter(s => s.sortWeight <= 1);
+        const soon = schedules.filter(s => s.sortWeight > 1 && s.sortWeight < 25);
+        const distant = schedules.filter(s => s.sortWeight >= 25);
 
-        // Grouping for the "Clear View"
-        const today = activeTimelines.filter(s => s.sortWeight <= 1);
-        const soon = activeTimelines.filter(s => s.sortWeight > 1 && s.sortWeight < 25);
-        const distant = activeTimelines.filter(s => s.sortWeight >= 25);
-
-        const renderSection = (label, items) => {
+        const renderGrid = (label, items) => {
             if (items.length === 0) return "";
             return `
-                <h2 style="font-size: 10px; color: var(--accent); letter-spacing: 2px; margin: 40px 0 20px 0; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 10px;">${label}</h2>
-                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 20px;">
-                    ${items.map(s => `
-                        <div class="glass" style="position: relative; overflow: hidden; border-radius: 8px;">
-                            <img src="${s.poster}" style="width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block;">
-                            <div style="position: absolute; top: 8px; right: 8px; background: var(--accent); color: black; font-size: 9px; font-weight: 900; padding: 2px 6px; border-radius: 4px;">${s.badge}</div>
-                            ${s.isLegend ? `<div style="position: absolute; top: 8px; left: 8px; background: var(--gold); color: black; font-size: 9px; font-weight: 900; padding: 2px 6px; border-radius: 4px;">LEGEND</div>` : ''}
-                            <div style="padding: 10px; background: linear-gradient(transparent, rgba(0,0,0,0.9));">
-                                <div style="font-size: 11px; font-weight: bold; color: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${s.title}</div>
-                                <div style="font-size: 9px; color: var(--accent); font-family: monospace; margin-top: 4px;">${s.subLabel}</div>
+                <div style="margin-top: 40px;">
+                    <h2 style="font-size: 11px; color: #555; letter-spacing: 2px; text-transform: uppercase; border-bottom: 1px solid #222; padding-bottom: 10px; margin-bottom: 20px;">${label}</h2>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 25px;">
+                        ${items.map(s => `
+                            <div style="position: relative; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
+                                <div style="position: relative; aspect-ratio: 2/3; border-radius: 6px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.05);">
+                                    <img src="${s.poster}" style="width: 100%; height: 100%; object-fit: cover;">
+                                    <div style="position: absolute; top: 10px; right: 10px; background: var(--accent); color: black; font-size: 10px; font-weight: 900; padding: 3px 8px; border-radius: 3px; box-shadow: 0 2px 10px rgba(0,0,0,0.5);">${s.badge}</div>
+                                    ${s.isLegend ? `<div style="position: absolute; top: 10px; left: 10px; background: var(--gold); color: black; font-size: 10px; font-weight: 900; padding: 3px 8px; border-radius: 3px;">LEGEND</div>` : ''}
+                                    <div style="position: absolute; bottom: 0; left: 0; right: 0; padding: 20px 10px 10px 10px; background: linear-gradient(transparent, rgba(0,0,0,0.95));">
+                                        <div style="color: white; font-weight: bold; font-size: 13px; line-height: 1.2; margin-bottom: 4px;">${s.title}</div>
+                                        <div style="color: var(--accent); font-family: monospace; font-size: 10px; opacity: 0.8;">${s.subLabel}</div>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                    `).join('')}
+                        `).join('')}
+                    </div>
                 </div>`;
         };
 
         res.send(`<html>
             <head><meta name="viewport" content="width=device-width, initial-scale=1.0">${HUD_STYLE}</head>
-            <body style="background: #050505;">
+            <body style="background: #080808; color: white;">
                 ${NAV_COMPONENT}
-                <div style="padding: 80px 20px; max-width: 900px; margin: auto;">
-                    <h1 style="font-weight: 900; margin: 0; letter-spacing: -1px;">CHRONO-<span style="color: var(--accent);">SYNC</span></h1>
-                    ${renderSection("UPLINK TODAY", today)}
-                    ${renderSection("COMING SOON", soon)}
-                    ${renderSection("DISTANT INTEL", distant)}
-                    ${activeTimelines.length === 0 ? '<div class="glass" style="padding: 40px; text-align: center; margin-top: 40px; opacity: 0.5;">NO ACTIVE TIMELINES DETECTED</div>' : ''}
+                <div style="padding: 100px 40px; max-width: 1200px; margin: auto;">
+                    <div style="display: flex; align-items: baseline; gap: 15px; margin-bottom: 10px;">
+                        <h1 style="font-size: 32px; font-weight: 900; letter-spacing: -1.5px; margin: 0;">CHRONO-<span style="color: var(--accent);">SYNC</span></h1>
+                        <span style="font-family: monospace; font-size: 10px; opacity: 0.3;">TIMELINE_INTEGRITY_VERIFIED</span>
+                    </div>
+                    ${renderGrid("Immediate Uplink", today)}
+                    ${renderGrid("Inbound Intelligence", soon)}
+                    ${renderGrid("Distant Intel / Pending", distant)}
                 </div>
             </body></html>`);
-    } catch (err) { res.status(500).send("Oracle Error"); }
+    } catch (err) { res.status(500).send("Oracle Core Error"); }
 });
 
 // --- NEW PAGE: PLAN TO WATCH ---
