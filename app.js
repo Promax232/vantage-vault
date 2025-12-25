@@ -259,94 +259,95 @@ app.get('/watchlist', async (req, res) => {
     </body></html>`);
 });
 
-// --- THE UNIVERSAL RADAR v8.0 (THE SURVIVAL UPDATE) ---
+// --- THE UNIVERSAL RADAR v9.0 (DETAILS + TIMELINE + VISIBILITY) ---
 app.get('/chrono-sync', async (req, res) => {
     try {
         const list = await getWatchlist();
-        // Filters: Active, Planned, and Hall of Fame (Sequel Search)
+        // FORCE inclusion of Plan to Watch & Hall of Fame
         const targetStatuses = ['watching', 'plan-to-watch', 'hall-of-fame'];
         const vaultItems = list.filter(s => targetStatuses.includes(s.status));
         
         const now = new Date();
-        const schedules = [];
+        let schedules = [];
 
         for (const show of vaultItems) {
-            // STEP 1: CREATE THE "SURVIVAL" OBJECT (Uses Vault Data Only)
             let intel = {
+                id: show.id,
                 title: show.title || "Unknown Asset",
-                poster: show.poster || show.image || show.imageUrl || "",
-                subLabel: "Vault Record (No Live Intel)",
-                badge: "OFFLINE",
+                poster: show.poster || show.image || "",
+                subLabel: "Vault Record",
+                badge: show.status.toUpperCase(),
                 sortWeight: 100,
-                isLegend: show.status === 'hall-of-fame'
+                type: show.type,
+                timeframe: "" // For the Oct 12 - Dec 28 range
             };
 
             try {
-                // STEP 2: TRY TO UPGRADE WITH LIVE INTEL
                 if (show.type === 'anime') {
-                    const malId = show.malId || show.id;
-                    const response = await fetch(`https://api.jikan.moe/v4/anime/${malId}`);
-                    if (response.ok) {
-                        const { data: anime } = await response.json();
+                    const response = await fetch(`https://api.jikan.moe/v4/anime/${show.malId || show.id}/full`);
+                    const { data: anime } = await response.json();
+                    if (anime) {
                         intel.title = anime.title_english || anime.title;
-                        intel.poster = anime.images?.jpg?.large_image_url || intel.poster;
-                        if (anime.status === "Currently Airing") {
+                        // SPECIAL CASE: ONE PUNCH MAN 3 SCHEDULE
+                        if (intel.title.includes("One Punch Man") && intel.title.includes("3")) {
+                            intel.timeframe = "OCT 12, 2025 — DEC 28, 2025";
+                            intel.subLabel = "Sundays @ TV Tokyo";
                             intel.badge = "LIVE";
-                            intel.subLabel = "Airing Weekly";
                             intel.sortWeight = 1;
-                        }
-                    }
-                } else {
-                    const tmdbUrl = `https://api.themoviedb.org/3/tv/${show.tmdbId || show.id}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`;
-                    const response = await fetch(tmdbUrl);
-                    if (response.ok) {
-                        const data = await response.json();
-                        intel.title = data.name || data.title;
-                        if (data.next_episode_to_air) {
-                            intel.badge = "NEXT";
-                            intel.subLabel = `S${data.next_episode_to_air.season_number}E${data.next_episode_to_air.episode_number}`;
+                        } else if (anime.status === "Currently Airing") {
+                            intel.badge = "AIRING";
+                            intel.subLabel = anime.broadcast?.string || "Weekly Uplink";
                             intel.sortWeight = 2;
                         }
                     }
+                } else {
+                    // TMDB WESTERN (Chernobyl / Lupin)
+                    const tmdbUrl = `https://api.themoviedb.org/3/tv/${show.tmdbId || show.id}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`;
+                    const data = await fetch(tmdbUrl).then(r => r.json());
+                    if (data.name) {
+                        intel.title = data.name;
+                        if (data.next_episode_to_air) {
+                            intel.badge = "ACTIVE";
+                            intel.subLabel = `Next: S${data.next_episode_to_air.season_number}E${data.next_episode_to_air.episode_number}`;
+                            intel.sortWeight = 0;
+                        } else if (data.status === "Returning Series") {
+                            intel.subLabel = "More Episodes Confirmed";
+                            intel.badge = "LEGACY";
+                        }
+                    }
                 }
-            } catch (err) {
-                console.log(`Radar Skip: ${intel.title}`); // Individual failure, but the page keeps living
-            }
-            
+            } catch (e) { /* Fallback to vault data */ }
             schedules.push(intel);
         }
 
-        // Temporal Sort
-        const finalSchedules = schedules.sort((a, b) => a.sortWeight - b.sortWeight);
+        const sorted = schedules.sort((a, b) => a.sortWeight - b.sortWeight);
 
-        res.send(`
-            <html>
+        res.send(`<html>
             <head>${HUD_STYLE}</head>
-            <body>
+            <body style="background:#050505; color:white;">
                 ${NAV_COMPONENT}
                 <div style="padding:100px 40px; max-width:1200px; margin:auto;">
-                    <h1 style="font-weight:900; letter-spacing:-1px;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
-                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:30px; margin-top:40px;">
-                        ${finalSchedules.map(s => `
-                            <div class="glass" style="border-radius:10px; overflow:hidden;">
-                                <div style="position:relative; aspect-ratio:2/3;">
-                                    <img src="${s.poster}" style="width:100%; height:100%; object-fit:cover;">
-                                    <div style="position:absolute; top:10px; right:10px; background:var(--accent); color:black; font-weight:900; padding:2px 8px; font-size:10px; border-radius:4px;">${s.badge}</div>
+                    <h1 style="font-weight:900;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
+                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:30px; margin-top:40px;">
+                        ${sorted.map(s => `
+                            <a href="/details/${s.id}" style="text-decoration:none; color:inherit;">
+                                <div class="glass" style="border-radius:12px; overflow:hidden; transition:0.3s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='transparent'">
+                                    <div style="position:relative; aspect-ratio:2/3;">
+                                        <img src="${s.poster}" style="width:100%; height:100%; object-fit:cover;">
+                                        <div style="position:absolute; top:12px; right:12px; background:var(--accent); color:black; font-weight:900; padding:4px 10px; font-size:11px; border-radius:4px;">${s.badge}</div>
+                                    </div>
+                                    <div style="padding:15px;">
+                                        <div style="font-weight:bold; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${s.title}</div>
+                                        <div style="color:var(--accent); font-family:monospace; font-size:10px; margin-top:5px;">${s.subLabel}</div>
+                                        ${s.timeframe ? `<div style="font-size:9px; opacity:0.5; margin-top:8px; border-top:1px solid #222; padding-top:8px;">${s.timeframe}</div>` : ''}
+                                    </div>
                                 </div>
-                                <div style="padding:15px;">
-                                    <div style="font-weight:bold; color:white; font-size:14px;">${s.title}</div>
-                                    <div style="color:var(--accent); font-family:monospace; font-size:10px; margin-top:5px;">${s.subLabel}</div>
-                                </div>
-                            </div>
+                            </a>
                         `).join('')}
                     </div>
                 </div>
-            </body>
-            </html>
-        `);
-    } catch (err) {
-        res.status(500).send("Critical Oracle Failure");
-    }
+            </body></html>`);
+    } catch (err) { res.status(500).send("Surgery Failed"); }
 });
 
 
