@@ -260,20 +260,22 @@ app.get('/watchlist', async (req, res) => {
 });
 
 
-// --- THE PURIST CACHE ---
 const RADAR_CACHE = new Map();
-const CACHE_DURATION = 1000 * 60 * 60 * 24; // 24 Hours
+const CACHE_DURATION = 1000 * 60 * 60 * 24; // 24-hour cycle
 
 app.get('/chrono-sync', async (req, res) => {
     try {
         const list = await getWatchlist();
-        // Remove Hall of Fame (Completed)
-        const targetStatuses = ['watching', 'planned'];
-        const vaultItems = list.filter(s => targetStatuses.includes(s.status));
+        
+        // --- FILTER: Only Anime that is currently being watched or planned ---
+        const animeItems = list.filter(s => 
+            (s.type === 'anime' || s.source === 'mal') && 
+            ['watching', 'planned'].includes(s.status)
+        );
         
         const now = new Date();
-        const schedules = await Promise.all(vaultItems.map(async (show) => {
-            const cacheKey = `radar_${show.id}`;
+        const schedules = await Promise.all(animeItems.map(async (show) => {
+            const cacheKey = `anime_${show.id}`;
             const cachedEntry = RADAR_CACHE.get(cacheKey);
 
             if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_DURATION)) {
@@ -282,114 +284,80 @@ app.get('/chrono-sync', async (req, res) => {
 
             let intel = {
                 id: show.id,
-                title: show.title || "Unknown Asset",
+                title: show.title || "Unknown Anime",
                 poster: show.poster || "",
-                subLabel: "STATIC_ARCHIVE",
-                badge: "VAULT",
-                sortWeight: 100,
-                type: show.type || 'tv'
+                status: "OFFLINE",
+                countdown: "",
+                sortWeight: 100
             };
 
-            // Poster Sanitization
-            if (intel.poster && !intel.poster.startsWith('http')) {
-                intel.poster = `https://image.tmdb.org/t/p/w500${intel.poster}`;
-            }
-
             try {
-                // --- THE ANILIST UPLINK (ONLY FOR ANIME) ---
-                if (show.source === 'mal' || show.type === 'anime') {
-                    const cleanId = show.id.toString().split('_')[0];
+                const cleanId = show.id.toString().split('_')[0];
+                const query = `
+                query ($id: Int) {
+                  Media (idMal: $id, type: ANIME) {
+                    title { english romanized }
+                    status
+                    nextAiringEpisode { airingAt timeUntilAiring episode }
+                  }
+                }`;
+
+                const response = await fetch('https://graphql.anilist.co', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query, variables: { id: parseInt(cleanId) } })
+                });
+
+                const { data } = await response.json();
+                if (data && data.Media) {
+                    const a = data.Media;
+                    intel.title = a.title.english || a.title.romanized;
                     
-                    const query = `
-                    query ($id: Int) {
-                      Media (idMal: $id, type: ANIME) {
-                        title { english romanized }
-                        status
-                        episodes
-                        nextAiringEpisode { airingAt timeUntilAiring episode }
-                      }
-                    }`;
-
-                    const response = await fetch('https://graphql.anilist.co', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                        body: JSON.stringify({ query, variables: { id: parseInt(cleanId) } })
-                    });
-
-                    const { data } = await response.json();
-                    if (data && data.Media) {
-                        const a = data.Media;
-                        intel.title = a.title.english || a.title.romanized;
-                        
-                        if (a.nextAiringEpisode) {
-                            const next = a.nextAiringEpisode;
-                            intel.badge = "LIVE";
-                            intel.subLabel = `EP ${next.episode}: ${Math.floor(next.timeUntilAiring / 86400)}d left`;
-                            intel.sortWeight = 1;
-                        } else if (a.status === "RELEASING") {
-                            intel.badge = "LIVE";
-                            intel.subLabel = "Airing Weekly";
-                            intel.sortWeight = 2;
-                        } else if (a.status === "NOT_YET_RELEASED") {
-                            intel.badge = "UPCOMING";
-                            intel.subLabel = "In Production";
-                            intel.sortWeight = 10;
-                        } else {
-                            intel.badge = "FINISHED";
-                            intel.subLabel = `${a.episodes || '?'} Episodes Total`;
-                            intel.sortWeight = 200;
-                        }
+                    if (a.nextAiringEpisode) {
+                        const next = a.nextAiringEpisode;
+                        const days = Math.floor(next.timeUntilAiring / 86400);
+                        intel.status = "LIVE";
+                        intel.countdown = `EP ${next.episode} in ${days}d`;
+                        intel.sortWeight = 1;
+                    } else if (a.status === "RELEASING") {
+                        intel.status = "AIRING";
+                        intel.countdown = "Weekly Release";
+                        intel.sortWeight = 2;
+                    } else if (a.status === "NOT_YET_RELEASED") {
+                        intel.status = "UPCOMING";
+                        intel.countdown = "In Production";
+                        intel.sortWeight = 10;
+                    } else {
+                        intel.status = "FINISHED";
+                        intel.countdown = "Complete";
+                        intel.sortWeight = 50;
                     }
-                } else {
-                    // --- WESTERN MEDIA: THE AMPUTATION ---
-                    // No more TMDB Fetching. No more "Decrypting" lag.
-                    intel.badge = show.status === 'watching' ? "SAVORING" : "PLANNED";
-                    intel.subLabel = "Vault Archive";
-                    intel.sortWeight = show.status === 'watching' ? 5 : 300;
                 }
-
+                
                 RADAR_CACHE.set(cacheKey, { intel, timestamp: Date.now() });
             } catch (err) {
-                intel.subLabel = "VAULT_LOCKED";
+                intel.countdown = "Sync Error";
             }
-
             return intel;
         }));
 
         const sorted = schedules.sort((a, b) => a.sortWeight - b.sortWeight);
 
-        res.send(`<html>
-            <head>${HUD_STYLE}</head>
-            <body style="background:#020202; color:#fff; font-family:sans-serif;">
+        res.send(`
+            <html>
+            <body style="background:#000; color:#fff; font-family:monospace; padding:50px;">
                 ${NAV_COMPONENT}
-                <div style="padding:100px 40px; max-width:1400px; margin:auto;">
-                    
-                    <div style="display:flex; justify-content:space-between; align-items:flex-end; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:20px; margin-bottom:40px;">
-                        <div>
-                            <h1 style="font-size:35px; font-weight:900; margin:0; letter-spacing:-1.5px;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
-                            <p style="font-family:monospace; font-size:10px; opacity:0.5; margin:5px 0 0 0;">ANILIST_UPLINK // NODES: ${sorted.length}</p>
-                        </div>
-                        <div style="display:flex; gap:20px; font-size:10px; font-family:monospace; letter-spacing:1px;">
-                            <span style="color:var(--accent);">● LIVE_ANIME</span>
-                            <span style="color:#f0ad4e;">● UPCOMING</span>
-                            <span style="color:#555;">● STATIC_VAULT</span>
-                        </div>
-                    </div>
-
-                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:35px;">
+                <div style="max-width:1200px; margin:auto;">
+                    <h1 style="letter-spacing:-2px; border-bottom:1px solid #333; padding-bottom:10px;">ANIME_RADAR</h1>
+                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:20px; margin-top:30px;">
                         ${sorted.map(s => `
-                            <div class="glass" style="border-radius:20px; overflow:hidden; border:1px solid rgba(255,255,255,0.03); transition: 0.3s;" onmouseover="this.style.borderColor='var(--accent)';" onmouseout="this.style.borderColor='rgba(255,255,255,0.03)';">
-                                <a href="/show/${s.type}/${s.id}" style="text-decoration:none; color:inherit;">
-                                    <div style="position:relative; aspect-ratio:2/3; overflow:hidden;">
-                                        <img src="${s.poster}" style="width:100%; height:100%; object-fit:cover;">
-                                        <div style="position:absolute; top:15px; right:15px; background:${getBadgeColor(s.badge)}; color:black; font-weight:900; padding:5px 12px; font-size:10px; border-radius:6px; box-shadow:0 8px 20px rgba(0,0,0,0.6);">${s.badge}</div>
-                                        ${s.sortWeight >= 100 ? `<div style="position:absolute; inset:0; background:rgba(0,0,0,0.5); pointer-events:none;"></div>` : ''}
-                                    </div>
-                                    <div style="padding:20px;">
-                                        <div style="font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:14px; margin-bottom:4px;">${s.title}</div>
-                                        <div style="color:var(--accent); font-family:monospace; font-size:10px; font-weight:bold; display:flex; align-items:center; gap:6px;">
-                                            <span style="width:5px; height:5px; background:var(--accent); border-radius:50%; display:inline-block; ${s.sortWeight < 100 ? 'animation: pulse 2s infinite;' : ''}"></span>
-                                            ${s.subLabel}
+                            <div style="border:1px solid #222; padding:10px; background:#050505;">
+                                <a href="/show/anime/${s.id}" style="text-decoration:none; color:inherit;">
+                                    <img src="${s.poster}" style="width:100%; aspect-ratio:2/3; object-fit:cover; filter:grayscale(50%);">
+                                    <div style="margin-top:10px;">
+                                        <div style="font-size:12px; font-weight:bold; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${s.title}</div>
+                                        <div style="font-size:10px; color:#aaa; margin-top:5px;">
+                                            [${s.status}] ${s.countdown}
                                         </div>
                                     </div>
                                 </a>
@@ -397,20 +365,13 @@ app.get('/chrono-sync', async (req, res) => {
                         `).join('')}
                     </div>
                 </div>
-                <style>
-                    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
-                </style>
-            </body></html>`);
-    } catch (err) { res.status(500).send("Uplink Failure."); }
+            </body>
+            </html>
+        `);
+    } catch (err) {
+        res.status(500).send("Critical Radar Failure.");
+    }
 });
-
-function getBadgeColor(badge) {
-    const colors = {
-        'LIVE': 'var(--accent)', 'UPCOMING': '#f0ad4e', 'SAVORING': '#5bc0de',
-        'VAULT': '#333', 'FINISHED': '#444', 'PLANNED': '#222'
-    };
-    return colors[badge] || '#ddd';
-}
 
 // --- NEW PAGE: PLAN TO WATCH ---
 app.get('/plan-to-watch', async (req, res) => {
