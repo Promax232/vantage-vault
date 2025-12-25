@@ -259,150 +259,135 @@ app.get('/watchlist', async (req, res) => {
     </body></html>`);
 });
 
-// --- THE HYBRID ORACLE (AUTO-ID + COUNTDOWN + SEASONAL PROGRESS) ---
-// ROUTE: GET /chrono-sync
-// PURPOSE: Live tactical dashboard for savoring active shows.
+// --- THE UNIVERSAL ORACLE (SEQUEL RADAR + PLAN-TO-WATCH) ---
 app.get('/chrono-sync', async (req, res) => {
     try {
+        res.set('Cache-Control', 'public, max-age=300');
         const list = await getWatchlist();
-        const watching = list.filter(s => s.status === 'watching');
+        
+        // Step 1: Broaden the net to find upcoming content in ALL categories
+        const targetStatuses = ['watching', 'plan-to-watch', 'hall-of-fame'];
+        const vaultItems = list.filter(s => targetStatuses.includes(s.status));
         const forceRefresh = req.query.refresh === 'true';
 
-        // --- SEASONAL HUD LOGIC ---
         const now = new Date();
         const month = now.getMonth();
         const year = now.getFullYear();
-        const seasons = [
-            { name: 'WINTER', months: [0, 1, 2] },
-            { name: 'SPRING', months: [3, 4, 5] },
-            { name: 'SUMMER', months: [6, 7, 8] },
-            { name: 'FALL', months: [9, 10, 11] }
-        ];
-        const currentSeason = seasons.find(s => s.months.includes(month));
-        const seasonStart = new Date(year, currentSeason.months[0], 1);
-        const seasonEnd = new Date(year, currentSeason.months[2] + 1, 0);
-        const totalSeasonDays = (seasonEnd - seasonStart) / (1000 * 60 * 60 * 24);
-        const daysPassed = (now - seasonStart) / (1000 * 60 * 60 * 24);
-        const seasonProgress = Math.min(100, Math.floor((daysPassed / totalSeasonDays) * 100));
+        const seasons = [{name:'WINTER',m:[0,1,2]},{name:'SPRING',m:[3,4,5]},{name:'SUMMER',m:[6,7,8]},{name:'FALL',m:[9,10,11]}];
+        const currentSeason = seasons.find(s => s.m.includes(month));
+        const seasonProgress = Math.min(100, Math.floor(((now - new Date(year, currentSeason.m[0], 1)) / (90 * 24 * 60 * 60 * 1000)) * 100));
 
-        const liveSchedules = await Promise.all(watching.map(async (show) => {
+        const liveSchedules = await Promise.all(vaultItems.map(async (show) => {
             try {
+                const displayTitle = show.title || "Unknown Intel";
+                const displayPoster = show.poster || show.image || show.imageUrl || "";
+                
+                // LEGEND CHECK: Is this a Hall of Fame show returning?
+                const isLegend = show.status === 'hall-of-fame';
+
+                // --- ANIME RADAR (JIKAN) ---
                 if (show.type === 'anime') {
                     let malId = show.malId;
                     if (!malId || forceRefresh) {
-                        const searchRes = await fetch(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(show.title)}&limit=1`);
-                        const searchData = await searchRes.json();
-                        if (searchData.data && searchData.data.length > 0) {
-                            malId = searchData.data[0].mal_id;
-                            await db.collection('watchlist').updateOne({ _id: new ObjectId(show._id) }, { $set: { malId: malId } });
+                        const search = await fetch(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(displayTitle)}&limit=1`).then(r => r.json());
+                        malId = search.data?.[0]?.mal_id;
+                    }
+                    const malData = await fetch(`https://api.jikan.moe/v4/anime/${malId}/full`).then(r => r.json());
+                    const anime = malData.data;
+
+                    const isAiring = anime.status === "Currently Airing";
+                    const isUpcoming = anime.status === "Not yet aired";
+                    
+                    if (!isAiring && !isUpcoming) return null; 
+                    
+                    const dayMap = { "Mondays": 1, "Tuesdays": 2, "Wednesdays": 3, "Thursdays": 4, "Fridays": 5, "Saturdays": 6, "Sundays": 0 };
+                    return { ...show, isLegend, title: displayTitle, poster: displayPoster, nextLabel: anime.broadcast?.string || "Uplink Confirmed", source: 'JIKAN', isToday: now.getDay() === dayMap[anime.broadcast?.day], targetHour: 23, radarType: isUpcoming ? 'UPCOMING' : 'LIVE' };
+                } 
+                
+                // --- WESTERN/HBO RADAR (TMDB) ---
+                else {
+                    const tmdbType = (show.type === 'movie' || show.tmdbId?.toString().length < 7) ? 'movie' : 'tv';
+                    const tmdbUrl = `https://api.themoviedb.org/3/${tmdbType}/${show.tmdbId || show.id}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`;
+                    const data = await fetch(tmdbUrl).then(r => r.json());
+                    
+                    let nextLabel = "TBA";
+                    let isToday = false;
+                    let radarType = 'ARCHIVED';
+
+                    if (tmdbType === 'tv') {
+                        if (data.next_episode_to_air) {
+                            nextLabel = `S${data.next_episode_to_air.season_number}E${data.next_episode_to_air.episode_number} (${data.next_episode_to_air.air_date})`;
+                            isToday = new Date(data.next_episode_to_air.air_date).toDateString() === now.toDateString();
+                            radarType = 'LIVE';
+                        } else if (data.in_production && data.status !== 'Ended') {
+                            nextLabel = "IN PRODUCTION";
+                            radarType = 'UPCOMING';
+                        } else {
+                            return null;
+                        }
+                    } else {
+                        const rDate = data.release_date || data.first_air_date;
+                        if (rDate && new Date(rDate) > now) {
+                            nextLabel = `RELEASE: ${rDate}`;
+                            isToday = new Date(rDate).toDateString() === now.toDateString();
+                            radarType = 'UPCOMING';
+                        } else {
+                            return null;
                         }
                     }
-                    const malResponse = await fetch(`https://api.jikan.moe/v4/anime/${malId}/full`);
-                    const malData = await malResponse.json();
-                    const anime = malData.data;
-                    const dayMap = { "Mondays": 1, "Tuesdays": 2, "Wednesdays": 3, "Thursdays": 4, "Fridays": 5, "Saturdays": 6, "Sundays": 0 };
-                    const broadcastDay = dayMap[anime.broadcast?.day] ?? -1;
-                    const isToday = now.getDay() === broadcastDay;
 
-                    return { ...show, malId, nextEpDate: anime.broadcast?.string || "Schedule Unknown", status: anime.status, source: 'JIKAN', airing: anime.airing, isToday, targetHour: 23 };
-                } else {
-                    const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${show.tmdbId}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`);
-                    const data = await tmdbRes.json();
-                    
-                    // Handle Movie/Special release dates vs TV episode dates
-                    const releaseDate = data.release_date || (data.next_episode_to_air ? data.next_episode_to_air.air_date : null);
-                    const next = data.next_episode_to_air;
-                    const isToday = releaseDate ? new Date(releaseDate).toDateString() === now.toDateString() : false;
-                    
-                    return { ...show, nextEp: next, releaseDate, inProduction: data.in_production, source: 'TMDB', isToday, targetHour: 20 };
+                    return { ...show, isLegend, title: displayTitle, poster: displayPoster, nextLabel, source: 'TMDB', isToday, targetHour: 20, radarType };
                 }
-            } catch (e) { return { ...show, nextEp: null, airing: false }; }
+            } catch (e) { return null; }
         }));
 
-        // --- FILTER REMOVED: Now showing all shows in 'watching' status ---
-        const activeTimelines = liveSchedules;
-
-        const renderOracleRow = (s) => {
-            const statusColor = s.isToday ? 'var(--accent)' : 'var(--border)';
-            
-            // Logic to show "PREMIERE" or "NEXT EP" or "SCHEDULE"
-            let label = s.nextEpDate; 
-            if (s.isToday) label = `● AIRING TODAY`;
-            else if (s.source === 'TMDB') {
-                label = s.nextEp ? `NEXT: ${s.nextEp.air_date}` : (s.releaseDate ? `RELEASE: ${s.releaseDate}` : 'TBA');
-            }
-
-            return `
-            <div class="glass" style="margin-bottom:15px; padding:15px; border-left:3px solid ${statusColor}; display:flex; gap:15px; position:relative;">
-                <img src="${s.poster}" style="width:55px; height:80px; border-radius:5px; object-fit:cover; border:1px solid rgba(255,255,255,0.1);">
-                <div style="flex:1;">
-                    <div style="display:flex; justify-content:space-between;">
-                        <div style="font-weight:bold; color:white; font-size:14px;">${s.title}</div>
-                        <span style="font-size:8px; opacity:0.3; letter-spacing:1px;">${s.source}</span>
-                    </div>
-                    <div style="font-family:monospace; font-size:10px; color:var(--accent); margin-top:4px;">
-                        ${label} ${s.nextEp ? '(EP '+s.nextEp.episode_number+')' : ''}
-                    </div>
-                    ${s.isToday ? `<div style="margin-top:8px; font-size:10px; color:var(--gold); font-family:monospace; font-weight:bold;">UPLINK IN: <span class="timer" data-target="${s.targetHour}">--H --M --S</span></div>` : ''}
-                    <div style="margin-top:12px; height:2px; background:rgba(255,255,255,0.05); border-radius:2px;">
-                        <div style="width:${(s.currentEpisode/(s.totalEpisodes||1))*100}%; height:100%; background:var(--accent); box-shadow:0 0 10px var(--accent);"></div>
-                    </div>
-                </div>
-            </div>`;
-        };
+        const activeTimelines = liveSchedules.filter(s => s !== null);
 
         res.send(`<html>
-            <head>
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                ${HUD_STYLE}
-                <style>
-                    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
-                    .timer { letter-spacing: 1px; }
-                    .refresh-btn:active { transform: scale(0.95); opacity: 0.5; }
-                    .seasonal-bar { height: 4px; background: rgba(255,255,255,0.05); border-radius: 10px; overflow: hidden; margin: 10px 0; }
-                    .seasonal-progress { height: 100%; background: linear-gradient(90deg, var(--border), var(--accent)); transition: width 1s ease; }
-                </style>
-            </head>
+            <head><meta name="viewport" content="width=device-width, initial-scale=1.0">${HUD_STYLE}</head>
             <body>
                 ${NAV_COMPONENT}
                 <div style="padding:80px 20px; max-width:800px; margin:auto;">
                     <div class="glass" style="margin-bottom:30px; padding:15px; border:1px solid rgba(255,215,0,0.1);">
-                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                            <span style="font-size:10px; font-family:monospace; letter-spacing:2px; color:var(--gold);">CURRENT_SEASON: ${currentSeason.name} ${year}</span>
-                            <span style="font-size:10px; font-family:monospace; opacity:0.6;">${seasonProgress}% COMPLETE</span>
+                        <div style="display:flex; justify-content:space-between; font-family:monospace; font-size:10px;">
+                            <span style="color:var(--gold);">ORACLE_RADAR: ${currentSeason.name}</span>
+                            <span>${seasonProgress}% COMPLETE</span>
                         </div>
-                        <div class="seasonal-bar"><div class="seasonal-progress" style="width:${seasonProgress}%"></div></div>
-                        <div style="font-size:8px; opacity:0.4; letter-spacing:1px; text-align:right;">TRANSITION IN ~${Math.floor(totalSeasonDays - daysPassed)} DAYS</div>
+                        <div style="height:4px; background:rgba(255,255,255,0.05); margin-top:10px; border-radius:10px; overflow:hidden;">
+                            <div style="width:${seasonProgress}%; height:100%; background:var(--accent);"></div>
+                        </div>
                     </div>
 
-                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:40px;">
-                        <div>
-                            <h1 style="font-weight:900; margin:0; letter-spacing:-1px;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
-                            <div style="font-size:10px; opacity:0.5; letter-spacing:3px;">ORACLE v4.0 // SEASONAL_INTEL</div>
-                        </div>
-                        <button onclick="window.location.href='/chrono-sync?refresh=true'" class="glass refresh-btn" style="padding:8px 12px; font-size:10px; color:var(--accent); border:1px solid var(--accent); cursor:pointer; font-family:monospace;">FORCE_SYNC</button>
+                    <h1 style="font-weight:900; margin:0; letter-spacing:-1px;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
+                    
+                    <div style="margin-top:30px;">
+                        ${activeTimelines.map(s => `
+                            <div class="glass" style="margin-bottom:15px; padding:15px; border-left:3px solid ${s.isToday ? 'var(--accent)' : (s.radarType === 'UPCOMING' ? 'var(--gold)' : 'var(--border)')}; display:flex; gap:15px; opacity: ${s.radarType === 'UPCOMING' ? '0.8' : '1'};">
+                                <img src="${s.poster}" style="width:55px; height:80px; border-radius:5px; object-fit:cover;">
+                                <div style="flex:1;">
+                                    <div style="display:flex; justify-content:space-between;">
+                                        <div style="font-weight:bold; color:white; font-size:14px;">${s.title}</div>
+                                        <span style="font-size:8px; opacity:0.3; letter-spacing:1px;">
+                                            ${s.isLegend ? '<span style="color:var(--gold);">[LEGEND]</span> ' : ''}${s.radarType} // ${s.source}
+                                        </span>
+                                    </div>
+                                    <div style="font-family:monospace; font-size:10px; color:var(--accent); margin-top:4px;">${s.isToday ? '● AIRING TODAY' : s.nextLabel}</div>
+                                    ${s.isToday ? `<div style="margin-top:8px; font-size:10px; color:var(--gold); font-family:monospace; font-weight:bold;">UPLINK IN: <span class="timer" data-target="${s.targetHour}">--H --M --S</span></div>` : ''}
+                                </div>
+                            </div>
+                        `).join('')}
                     </div>
-
-                    ${activeTimelines.length > 0 ? activeTimelines.map(s => renderOracleRow(s)).join('') : 
-                    '<div class="glass" style="padding:40px; text-align:center; opacity:0.3; border:1px dashed var(--border);">NO ACTIVE TIMELINES DETECTED</div>'}
                 </div>
                 <script>
                     function updateTimers() {
                         document.querySelectorAll('.timer').forEach(el => {
-                            const targetHour = parseInt(el.dataset.target);
-                            const now = new Date();
-                            const target = new Date();
-                            target.setHours(targetHour, 0, 0);
-                            let diff = target - now;
-                            if (diff < 0) diff = 0;
-                            const h = Math.floor(diff / 3600000);
-                            const m = Math.floor((diff % 3600000) / 60000);
-                            const s = Math.floor((diff % 60000) / 1000);
+                            const t = new Date(); t.setHours(parseInt(el.dataset.target), 0, 0);
+                            let d = Math.max(0, t - new Date());
+                            const h = Math.floor(d / 3600000), m = Math.floor((d % 3600000) / 60000), s = Math.floor((d % 60000) / 1000);
                             el.innerText = h + "H " + m + "M " + s + "S";
                         });
                     }
-                    setInterval(updateTimers, 1000);
-                    updateTimers();
+                    setInterval(updateTimers, 1000); updateTimers();
                 </script>
             </body></html>`);
     } catch (err) { res.status(500).send("Oracle Error"); }
