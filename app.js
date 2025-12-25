@@ -259,13 +259,13 @@ app.get('/watchlist', async (req, res) => {
     </body></html>`);
 });
 
-// --- THE UNIVERSAL ORACLE (SEQUEL RADAR + PLAN-TO-WATCH) ---
+// --- THE REFINED UNIVERSAL RADAR (ACTIVE + SEQUELS + PLAN-TO-WATCH) ---
 app.get('/chrono-sync', async (req, res) => {
     try {
         res.set('Cache-Control', 'public, max-age=300');
         const list = await getWatchlist();
         
-        // Step 1: Broaden the net to find upcoming content in ALL categories
+        // Step 1: Broaden the net. We MUST include 'watching' to see weekly air dates.
         const targetStatuses = ['watching', 'plan-to-watch', 'hall-of-fame'];
         const vaultItems = list.filter(s => targetStatuses.includes(s.status));
         const forceRefresh = req.query.refresh === 'true';
@@ -281,9 +281,8 @@ app.get('/chrono-sync', async (req, res) => {
             try {
                 const displayTitle = show.title || "Unknown Intel";
                 const displayPoster = show.poster || show.image || show.imageUrl || "";
-                
-                // LEGEND CHECK: Is this a Hall of Fame show returning?
                 const isLegend = show.status === 'hall-of-fame';
+                const isActive = show.status === 'watching'; // Identifying shows you are currently on
 
                 // --- ANIME RADAR (JIKAN) ---
                 if (show.type === 'anime') {
@@ -298,10 +297,19 @@ app.get('/chrono-sync', async (req, res) => {
                     const isAiring = anime.status === "Currently Airing";
                     const isUpcoming = anime.status === "Not yet aired";
                     
-                    if (!isAiring && !isUpcoming) return null; 
+                    // If it's not airing or upcoming, we only show it if it's currently in your "Watching" list (to avoid losing it)
+                    if (!isAiring && !isUpcoming && !isActive) return null; 
                     
                     const dayMap = { "Mondays": 1, "Tuesdays": 2, "Wednesdays": 3, "Thursdays": 4, "Fridays": 5, "Saturdays": 6, "Sundays": 0 };
-                    return { ...show, isLegend, title: displayTitle, poster: displayPoster, nextLabel: anime.broadcast?.string || "Uplink Confirmed", source: 'JIKAN', isToday: now.getDay() === dayMap[anime.broadcast?.day], targetHour: 23, radarType: isUpcoming ? 'UPCOMING' : 'LIVE' };
+                    return { 
+                        ...show, isLegend, isActive,
+                        title: displayTitle, poster: displayPoster, 
+                        nextLabel: anime.broadcast?.string || (isAiring ? "Airing Weekly" : "Uplink Confirmed"), 
+                        source: 'JIKAN', 
+                        isToday: now.getDay() === dayMap[anime.broadcast?.day], 
+                        targetHour: 23, 
+                        radarType: isAiring ? 'LIVE' : (isUpcoming ? 'UPCOMING' : 'ACTIVE') 
+                    };
                 } 
                 
                 // --- WESTERN/HBO RADAR (TMDB) ---
@@ -312,7 +320,7 @@ app.get('/chrono-sync', async (req, res) => {
                     
                     let nextLabel = "TBA";
                     let isToday = false;
-                    let radarType = 'ARCHIVED';
+                    let radarType = 'ACTIVE';
 
                     if (tmdbType === 'tv') {
                         if (data.next_episode_to_air) {
@@ -322,8 +330,8 @@ app.get('/chrono-sync', async (req, res) => {
                         } else if (data.in_production && data.status !== 'Ended') {
                             nextLabel = "IN PRODUCTION";
                             radarType = 'UPCOMING';
-                        } else {
-                            return null;
+                        } else if (!isActive) {
+                            return null; // Don't show ended series unless they are in Active Sync
                         }
                     } else {
                         const rDate = data.release_date || data.first_air_date;
@@ -331,12 +339,12 @@ app.get('/chrono-sync', async (req, res) => {
                             nextLabel = `RELEASE: ${rDate}`;
                             isToday = new Date(rDate).toDateString() === now.toDateString();
                             radarType = 'UPCOMING';
-                        } else {
+                        } else if (!isActive) {
                             return null;
                         }
                     }
 
-                    return { ...show, isLegend, title: displayTitle, poster: displayPoster, nextLabel, source: 'TMDB', isToday, targetHour: 20, radarType };
+                    return { ...show, isLegend, isActive, title: displayTitle, poster: displayPoster, nextLabel, source: 'TMDB', isToday, targetHour: 20, radarType };
                 }
             } catch (e) { return null; }
         }));
@@ -368,7 +376,7 @@ app.get('/chrono-sync', async (req, res) => {
                                     <div style="display:flex; justify-content:space-between;">
                                         <div style="font-weight:bold; color:white; font-size:14px;">${s.title}</div>
                                         <span style="font-size:8px; opacity:0.3; letter-spacing:1px;">
-                                            ${s.isLegend ? '<span style="color:var(--gold);">[LEGEND]</span> ' : ''}${s.radarType} // ${s.source}
+                                            ${s.isLegend ? '<span style="color:var(--gold);">[LEGEND]</span> ' : ''}${s.isActive ? '<span style="color:var(--accent);">[ACTIVE]</span> ' : ''}${s.radarType} // ${s.source}
                                         </span>
                                     </div>
                                     <div style="font-family:monospace; font-size:10px; color:var(--accent); margin-top:4px;">${s.isToday ? '● AIRING TODAY' : s.nextLabel}</div>
