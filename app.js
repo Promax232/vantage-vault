@@ -259,6 +259,10 @@ app.get('/watchlist', async (req, res) => {
     </body></html>`);
 });
 
+// --- RADAR CACHE SYSTEM (PREVENTS API THROTTLING) ---
+const RADAR_CACHE = new Map();
+const CACHE_DURATION = 1000 * 60 * 60 * 6; // 6 Hours
+
 app.get('/chrono-sync', async (req, res) => {
     try {
         const list = await getWatchlist();
@@ -274,7 +278,7 @@ app.get('/chrono-sync', async (req, res) => {
                 poster: show.poster || "",
                 subLabel: "DECRYPTING...",
                 badge: show.status.toUpperCase(),
-                sortWeight: 50, // Neutral start
+                sortWeight: 50,
                 timeframe: "",
                 type: show.type || 'tv'
             };
@@ -284,8 +288,17 @@ app.get('/chrono-sync', async (req, res) => {
                 intel.poster = `https://image.tmdb.org/t/p/w500${intel.poster}`;
             }
 
+            // --- STEP 2: CACHE CHECK ---
+            const cacheKey = `radar_${show.id}`;
+            const cachedEntry = RADAR_CACHE.get(cacheKey);
+
+            if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_DURATION)) {
+                // Return cached version immediately
+                return cachedEntry.intel;
+            }
+
             try {
-                // --- STEP 2: MULTIVERSE DATA ACQUISITION ---
+                // --- STEP 3: MULTIVERSE DATA ACQUISITION ---
                 const cleanId = show.id.toString().split('_')[0];
                 
                 if (show.source === 'mal' || show.type === 'anime') {
@@ -294,7 +307,6 @@ app.get('/chrono-sync', async (req, res) => {
                     if (a) {
                         intel.title = a.title_english || a.title;
                         
-                        // Universal Anime Logic
                         if (a.status === "Currently Airing") {
                             intel.badge = "LIVE";
                             intel.subLabel = a.broadcast?.string || "Airing Weekly";
@@ -305,14 +317,12 @@ app.get('/chrono-sync', async (req, res) => {
                             intel.subLabel = `PREMIERE: ${pDate}`;
                             intel.sortWeight = 10;
                         } else {
-                            // Finished Anime (Frieren S1, etc)
                             intel.badge = "FINISHED";
-                            intel.subLabel = `${a.episodes} Episodes Total`;
+                            intel.subLabel = `${a.episodes || '?'} Episodes Total`;
                             intel.sortWeight = 100;
                         }
                     }
                 } else {
-                    // Western Media Logic (TMDB)
                     const tmdbUrl = `https://api.themoviedb.org/3/tv/${cleanId}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`;
                     const data = await fetch(tmdbUrl).then(r => r.json());
                     
@@ -328,35 +338,34 @@ app.get('/chrono-sync', async (req, res) => {
                             intel.subLabel = "New Episodes Confirmed";
                             intel.sortWeight = 20;
                         } else {
-                            // Ended shows (Chernobyl, etc)
                             intel.badge = "LEGACY";
                             intel.subLabel = "Complete Series";
                             intel.sortWeight = 150;
                         }
                     }
                 }
+
+                // --- MASTER OVERRIDES (STILL WITHIN FETCH BLOCK) ---
+                if (show.status === 'completed') {
+                    intel.badge = "LEGEND";
+                    intel.sortWeight = 1000;
+                }
+                if (show.status === 'planned' && intel.sortWeight > 50) {
+                    intel.badge = "SCOUT";
+                    intel.subLabel = "Monitoring for Dates...";
+                }
+
+                // COMMIT TO CACHE
+                RADAR_CACHE.set(cacheKey, { intel, timestamp: Date.now() });
+
             } catch (err) {
                 intel.subLabel = "UPLINK_OFFLINE";
                 intel.badge = "VAULT";
             }
 
-            // --- STEP 3: MASTER OVERRIDES ---
-            // If the user marked it 'completed' (Hall of Fame), it always goes to the bottom
-            if (show.status === 'completed') {
-                intel.badge = "LEGEND";
-                intel.sortWeight = 1000;
-            }
-            
-            // If it's a 'planned' show with no air date yet
-            if (show.status === 'planned' && intel.sortWeight > 50) {
-                intel.badge = "SCOUT";
-                intel.subLabel = "Monitoring for Dates...";
-            }
-
             return intel;
         }));
 
-        // Sort by priority (Live first, Then Upcoming, Then Scout, Then Legacy)
         const sorted = schedules.sort((a, b) => a.sortWeight - b.sortWeight);
 
         res.send(`<html>
@@ -383,9 +392,7 @@ app.get('/chrono-sync', async (req, res) => {
                                 <a href="/show/${s.type}/${s.id}" style="text-decoration:none; color:inherit;">
                                     <div style="position:relative; aspect-ratio:2/3; overflow:hidden;">
                                         <img src="${s.poster}" style="width:100%; height:100%; object-fit:cover;">
-                                        
                                         <div style="position:absolute; top:15px; right:15px; background:${getBadgeColor(s.badge)}; color:black; font-weight:900; padding:5px 12px; font-size:10px; border-radius:6px; box-shadow:0 8px 20px rgba(0,0,0,0.6);">${s.badge}</div>
-                                        
                                         ${s.sortWeight > 100 ? `<div style="position:absolute; inset:0; background:rgba(0,0,0,0.4); pointer-events:none;"></div>` : ''}
                                     </div>
 
@@ -424,7 +431,6 @@ function getBadgeColor(badge) {
     };
     return colors[badge] || '#ddd';
 }
-
 
 
 // --- NEW PAGE: PLAN TO WATCH ---
