@@ -259,128 +259,96 @@ app.get('/watchlist', async (req, res) => {
     </body></html>`);
 });
 
-// --- THE UNIVERSAL RADAR v7.0 (VAULT-FIRST PERSISTENCE) ---
+// --- THE UNIVERSAL RADAR v8.0 (THE SURVIVAL UPDATE) ---
 app.get('/chrono-sync', async (req, res) => {
     try {
-        res.set('Cache-Control', 'public, max-age=300');
         const list = await getWatchlist();
-        
-        // We pull EVERYTHING from these three categories to ensure no "missing" shows
+        // Filters: Active, Planned, and Hall of Fame (Sequel Search)
         const targetStatuses = ['watching', 'plan-to-watch', 'hall-of-fame'];
         const vaultItems = list.filter(s => targetStatuses.includes(s.status));
-        const forceRefresh = req.query.refresh === 'true';
-
+        
         const now = new Date();
-        const schedules = await Promise.all(vaultItems.map(async (show) => {
-            // BASE DATA (Always use vault data as the fallback to prevent "undefined")
+        const schedules = [];
+
+        for (const show of vaultItems) {
+            // STEP 1: CREATE THE "SURVIVAL" OBJECT (Uses Vault Data Only)
             let intel = {
                 title: show.title || "Unknown Asset",
                 poster: show.poster || show.image || show.imageUrl || "",
-                subLabel: "Awaiting Schedule...",
-                badge: "TBA",
+                subLabel: "Vault Record (No Live Intel)",
+                badge: "OFFLINE",
                 sortWeight: 100,
-                isLegend: show.status === 'hall-of-fame',
-                isActive: show.status === 'watching'
+                isLegend: show.status === 'hall-of-fame'
             };
 
             try {
+                // STEP 2: TRY TO UPGRADE WITH LIVE INTEL
                 if (show.type === 'anime') {
-                    const malId = show.malId || (await fetch(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(intel.title)}&limit=1`).then(r => r.json())).data?.[0]?.mal_id;
-                    const malData = await fetch(`https://api.jikan.moe/v4/anime/${malId}/full`).then(r => r.json());
-                    const anime = malData.data;
-
-                    if (anime) {
-                        intel.title = anime.title_english || anime.title || intel.title;
+                    const malId = show.malId || show.id;
+                    const response = await fetch(`https://api.jikan.moe/v4/anime/${malId}`);
+                    if (response.ok) {
+                        const { data: anime } = await response.json();
+                        intel.title = anime.title_english || anime.title;
                         intel.poster = anime.images?.jpg?.large_image_url || intel.poster;
-                        
                         if (anime.status === "Currently Airing") {
-                            intel.subLabel = anime.broadcast?.string || "Airing Weekly";
                             intel.badge = "LIVE";
+                            intel.subLabel = "Airing Weekly";
                             intel.sortWeight = 1;
-                        } else if (anime.status === "Not yet aired") {
-                            intel.subLabel = anime.aired?.from ? `Premiere: ${new Date(anime.aired.from).toLocaleDateString()}` : "Upcoming Season";
-                            intel.badge = "NEXT";
-                            intel.sortWeight = 20;
                         }
                     }
                 } else {
-                    // TMDB Logic for Chernobyl / The Rip
-                    const tmdbType = (show.type === 'movie') ? 'movie' : 'tv';
-                    const tmdbUrl = `https://api.themoviedb.org/3/${tmdbType}/${show.tmdbId || show.id}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`;
-                    const data = await fetch(tmdbUrl).then(r => r.json());
-
-                    if (data) {
-                        intel.title = data.name || data.title || intel.title;
-                        if (data.poster_path) intel.poster = `https://image.tmdb.org/t/p/w500${data.poster_path}`;
-
+                    const tmdbUrl = `https://api.themoviedb.org/3/tv/${show.tmdbId || show.id}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`;
+                    const response = await fetch(tmdbUrl);
+                    if (response.ok) {
+                        const data = await response.json();
+                        intel.title = data.name || data.title;
                         if (data.next_episode_to_air) {
-                            intel.subLabel = `S${data.next_episode_to_air.season_number}E${data.next_episode_to_air.episode_number} (${data.next_episode_to_air.air_date})`;
-                            const airDate = new Date(data.next_episode_to_air.air_date);
-                            intel.badge = (airDate.toDateString() === now.toDateString()) ? "TODAY" : "NEXT";
-                            intel.sortWeight = (intel.badge === "TODAY") ? 0 : 2;
-                        } else if (data.status === 'In Production' || data.in_production) {
-                            intel.subLabel = "Confirmed: In Production";
-                            intel.badge = "TBA";
-                            intel.sortWeight = 30;
+                            intel.badge = "NEXT";
+                            intel.subLabel = `S${data.next_episode_to_air.season_number}E${data.next_episode_to_air.episode_number}`;
+                            intel.sortWeight = 2;
                         }
                     }
                 }
-            } catch (e) { console.error("API Skip for", intel.title); }
-
-            // FINAL OVERRIDE: If you are actively watching it, make sure it has a high-visibility weight
-            if (intel.isActive && intel.sortWeight > 5) {
-                intel.sortWeight = 5;
-                intel.badge = "ACTIVE";
-                intel.subLabel = intel.subLabel === "Awaiting Schedule..." ? "Active Sync Session" : intel.subLabel;
+            } catch (err) {
+                console.log(`Radar Skip: ${intel.title}`); // Individual failure, but the page keeps living
             }
+            
+            schedules.push(intel);
+        }
 
-            return intel;
-        }));
+        // Temporal Sort
+        const finalSchedules = schedules.sort((a, b) => a.sortWeight - b.sortWeight);
 
-        // Temporal Grouping for the "Calendar" look
-        const today = schedules.filter(s => s.sortWeight <= 1);
-        const soon = schedules.filter(s => s.sortWeight > 1 && s.sortWeight < 25);
-        const distant = schedules.filter(s => s.sortWeight >= 25);
-
-        const renderGrid = (label, items) => {
-            if (items.length === 0) return "";
-            return `
-                <div style="margin-top: 40px;">
-                    <h2 style="font-size: 11px; color: #555; letter-spacing: 2px; text-transform: uppercase; border-bottom: 1px solid #222; padding-bottom: 10px; margin-bottom: 20px;">${label}</h2>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 25px;">
-                        ${items.map(s => `
-                            <div style="position: relative; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">
-                                <div style="position: relative; aspect-ratio: 2/3; border-radius: 6px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.05);">
-                                    <img src="${s.poster}" style="width: 100%; height: 100%; object-fit: cover;">
-                                    <div style="position: absolute; top: 10px; right: 10px; background: var(--accent); color: black; font-size: 10px; font-weight: 900; padding: 3px 8px; border-radius: 3px; box-shadow: 0 2px 10px rgba(0,0,0,0.5);">${s.badge}</div>
-                                    ${s.isLegend ? `<div style="position: absolute; top: 10px; left: 10px; background: var(--gold); color: black; font-size: 10px; font-weight: 900; padding: 3px 8px; border-radius: 3px;">LEGEND</div>` : ''}
-                                    <div style="position: absolute; bottom: 0; left: 0; right: 0; padding: 20px 10px 10px 10px; background: linear-gradient(transparent, rgba(0,0,0,0.95));">
-                                        <div style="color: white; font-weight: bold; font-size: 13px; line-height: 1.2; margin-bottom: 4px;">${s.title}</div>
-                                        <div style="color: var(--accent); font-family: monospace; font-size: 10px; opacity: 0.8;">${s.subLabel}</div>
-                                    </div>
+        res.send(`
+            <html>
+            <head>${HUD_STYLE}</head>
+            <body>
+                ${NAV_COMPONENT}
+                <div style="padding:100px 40px; max-width:1200px; margin:auto;">
+                    <h1 style="font-weight:900; letter-spacing:-1px;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
+                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap:30px; margin-top:40px;">
+                        ${finalSchedules.map(s => `
+                            <div class="glass" style="border-radius:10px; overflow:hidden;">
+                                <div style="position:relative; aspect-ratio:2/3;">
+                                    <img src="${s.poster}" style="width:100%; height:100%; object-fit:cover;">
+                                    <div style="position:absolute; top:10px; right:10px; background:var(--accent); color:black; font-weight:900; padding:2px 8px; font-size:10px; border-radius:4px;">${s.badge}</div>
+                                </div>
+                                <div style="padding:15px;">
+                                    <div style="font-weight:bold; color:white; font-size:14px;">${s.title}</div>
+                                    <div style="color:var(--accent); font-family:monospace; font-size:10px; margin-top:5px;">${s.subLabel}</div>
                                 </div>
                             </div>
                         `).join('')}
                     </div>
-                </div>`;
-        };
-
-        res.send(`<html>
-            <head><meta name="viewport" content="width=device-width, initial-scale=1.0">${HUD_STYLE}</head>
-            <body style="background: #080808; color: white;">
-                ${NAV_COMPONENT}
-                <div style="padding: 100px 40px; max-width: 1200px; margin: auto;">
-                    <div style="display: flex; align-items: baseline; gap: 15px; margin-bottom: 10px;">
-                        <h1 style="font-size: 32px; font-weight: 900; letter-spacing: -1.5px; margin: 0;">CHRONO-<span style="color: var(--accent);">SYNC</span></h1>
-                        <span style="font-family: monospace; font-size: 10px; opacity: 0.3;">TIMELINE_INTEGRITY_VERIFIED</span>
-                    </div>
-                    ${renderGrid("Immediate Uplink", today)}
-                    ${renderGrid("Inbound Intelligence", soon)}
-                    ${renderGrid("Distant Intel / Pending", distant)}
                 </div>
-            </body></html>`);
-    } catch (err) { res.status(500).send("Oracle Core Error"); }
+            </body>
+            </html>
+        `);
+    } catch (err) {
+        res.status(500).send("Critical Oracle Failure");
+    }
 });
+
 
 // --- NEW PAGE: PLAN TO WATCH ---
 app.get('/plan-to-watch', async (req, res) => {
