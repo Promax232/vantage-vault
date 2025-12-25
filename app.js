@@ -155,12 +155,12 @@ const NAV_COMPONENT = `
     
     <a href="/watchlist" class="nav-link"><span class="nav-icon">⦿</span> ACTIVE SYNC</a>
     <a href="/plan-to-watch" class="nav-link"><span class="nav-icon">🔖</span> PLAN TO WATCH</a>
-    <a href="#" class="nav-link" style="opacity:0.3; cursor:not-allowed;"><span class="nav-icon">🏆</span> HALL OF FAME</a>
+    <a href="/hall-of-fame" class="nav-link"><span class="nav-icon">🏆</span> HALL OF FAME</a>
     <a href="#" class="nav-link" style="opacity:0.3; cursor:not-allowed;"><span class="nav-icon">⏳</span> CHRONO-SYNC</a>
 
     <div style="margin-top:auto; padding:20px; background:rgba(255,255,255,0.03); border-radius:15px; border:1px solid var(--border);">
         <div style="font-size:10px; color:var(--accent); letter-spacing:1px; margin-bottom:5px;">● SYSTEM ONLINE</div>
-        <div style="font-size:9px; color:#8b949e; opacity:0.6;">PHASE 2: SIDEBAR STABILIZED</div>
+        <div style="font-size:9px; color:#8b949e; opacity:0.6;">PHASE 3: HALL OF FAME UNLOCKED</div>
     </div>
 </div>
 <script>
@@ -195,8 +195,7 @@ const VOICE_SCRIPT = `
 
 app.get('/watchlist', async (req, res) => {
     const list = await getWatchlist();
-    const activeSyncs = list.filter(s => s.status === 'watching' && s.currentEpisode < (s.totalEpisodes || 1));
-    const completed = list.filter(s => s.currentEpisode >= (s.totalEpisodes || 1));
+    const activeSyncs = list.filter(s => s.status === 'watching');
     
     const renderCard = (s) => {
         const total = s.totalEpisodes || 1;
@@ -242,12 +241,8 @@ app.get('/watchlist', async (req, res) => {
             <h2 style="font-size:11px; letter-spacing:3px; opacity:0.4; margin:0 0 20px 10px; font-weight:800;">● ACTIVE_SYNC</h2>
             <div class="poster-grid">
                 ${activeSyncs.map(s => renderCard(s)).join('')}
+                ${activeSyncs.length === 0 ? '<div style="grid-column: 1/-1; text-align:center; padding:100px; opacity:0.3;">No Active Syncs.</div>' : ''}
             </div>
-
-            ${completed.length ? `<h2 style="font-size:11px; letter-spacing:3px; opacity:0.4; margin:40px 0 20px 10px; font-weight:800;">● ARCHIVE_COMPLETED</h2>
-            <div class="poster-grid" style="opacity:0.7;">
-                ${completed.map(s => renderCard(s)).join('')}
-            </div>` : ''}
         </div>
         ${VOICE_SCRIPT}
         <script>
@@ -319,6 +314,43 @@ app.get('/plan-to-watch', async (req, res) => {
                 location.href = '/watchlist';
             }
         </script>
+    </body></html>`);
+});
+
+// --- NEW PAGE: HALL OF FAME ---
+app.get('/hall-of-fame', async (req, res) => {
+    const list = await getWatchlist();
+    const completed = list.filter(s => s.status === 'completed');
+    
+    const renderHallCard = (s) => {
+        let posterUrl = s.poster;
+        if (posterUrl && !posterUrl.startsWith('http')) posterUrl = `https://image.tmdb.org/t/p/w500${posterUrl}`;
+        return `
+        <div class="glass" style="padding:10px; position:relative; border-color:var(--gold); background:rgba(255, 204, 0, 0.03);">
+            <div style="position:absolute; top:15px; right:15px; background:var(--gold); color:black; font-weight:900; padding:5px 10px; border-radius:8px; font-size:12px; z-index:10; box-shadow:0 0 15px rgba(255,204,0,0.5);">${s.personalRating || 'NR'}</div>
+            <a href="/show/${s.type}/${s.id}"><img src="${posterUrl}" style="width:100%; height:240px; object-fit:cover; border-radius:12px;"></a>
+            <div style="padding:10px; text-align:center;">
+                <h4 style="font-size:13px; margin:5px 0; font-weight:800; color:var(--gold);">${s.title.toUpperCase()}</h4>
+                <div style="font-size:9px; opacity:0.5; letter-spacing:1px;">MISSION ACCOMPLISHED</div>
+            </div>
+        </div>`;
+    };
+
+    res.send(`<html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            ${HUD_STYLE}
+        </head>
+        <body>
+        ${NAV_COMPONENT}
+        <div style="padding:20px; max-width:1400px; margin:auto; padding-top:80px;">
+            <h1 style="font-size:24px; margin:0 0 10px 0; font-weight:900;">HALL OF <span style="color:var(--gold);">FAME</span></h1>
+            <p style="opacity:0.5; font-size:12px; margin-bottom:40px;">ELITE ARCHIVES & HIGHEST RATINGS</p>
+            <div class="poster-grid">
+                ${completed.map(s => renderHallCard(s)).join('')}
+                ${completed.length === 0 ? '<div style="grid-column: 1/-1; text-align:center; padding:100px; opacity:0.3;">Hall is empty. Complete a show to induct it.</div>' : ''}
+            </div>
+        </div>
     </body></html>`);
 });
 
@@ -450,7 +482,13 @@ app.get('/save', async (req, res) => {
 app.get('/api/update/:id', async (req, res) => {
     const show = await Show.findOne({ id: req.params.id });
     if (show) {
-        if (req.query.action === 'plus') show.currentEpisode++;
+        if (req.query.action === 'plus') {
+            show.currentEpisode++;
+            // AUTO-ARCHIVE LOGIC: Move to Hall of Fame if finished
+            if (show.currentEpisode >= show.totalEpisodes) {
+                show.status = 'completed';
+            }
+        }
         if (req.query.rating) show.personalRating = parseInt(req.query.rating);
         await show.save();
         res.json({ success: true });
@@ -467,6 +505,8 @@ app.post('/api/journal/:id', async (req, res) => {
     if (show) {
         if (!show.logs) show.logs = new Map();
         show.logs.set(req.body.ep.toString(), { text: req.body.text, date: new Date().toLocaleDateString() });
+        // Handle episode jumps from journal
+        if (parseInt(req.body.ep) >= show.totalEpisodes) show.status = 'completed';
         await show.save();
     }
     res.json({ success: true });
