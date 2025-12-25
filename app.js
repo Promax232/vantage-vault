@@ -143,6 +143,11 @@ body { background: var(--bg); color: #f0f6fc; font-family: -apple-system, BlinkM
 
 .rating-orb { width: 34px; height: 34px; margin: 5px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: #8b949e; border-radius: 50%; cursor: pointer; font-size: 12px; transition: 0.3s; }
 .rating-orb.active { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 15px rgba(0,212,255,0.3); background: rgba(0,212,255,0.1); }
+
+/* CHRONO STYLE */
+.chrono-row { display: flex; align-items: center; gap: 20px; padding: 20px; margin-bottom: 15px; }
+.chrono-timeline { flex: 1; height: 8px; background: rgba(255,255,255,0.05); border-radius: 10px; position: relative; overflow: hidden; }
+.chrono-progress { height: 100%; background: linear-gradient(90deg, var(--accent), #00ffaa); box-shadow: 0 0 15px var(--accent); transition: 1s ease-out; }
 </style>
 `;
 
@@ -156,11 +161,11 @@ const NAV_COMPONENT = `
     <a href="/watchlist" class="nav-link"><span class="nav-icon">⦿</span> ACTIVE SYNC</a>
     <a href="/plan-to-watch" class="nav-link"><span class="nav-icon">🔖</span> PLAN TO WATCH</a>
     <a href="/hall-of-fame" class="nav-link"><span class="nav-icon">🏆</span> HALL OF FAME</a>
-    <a href="#" class="nav-link" style="opacity:0.3; cursor:not-allowed;"><span class="nav-icon">⏳</span> CHRONO-SYNC</a>
+    <a href="/chrono-sync" class="nav-link"><span class="nav-icon">⏳</span> CHRONO-SYNC</a>
 
     <div style="margin-top:auto; padding:20px; background:rgba(255,255,255,0.03); border-radius:15px; border:1px solid var(--border);">
         <div style="font-size:10px; color:var(--accent); letter-spacing:1px; margin-bottom:5px;">● SYSTEM ONLINE</div>
-        <div style="font-size:9px; color:#8b949e; opacity:0.6;">PHASE 3: HALL OF FAME UNLOCKED</div>
+        <div style="font-size:9px; color:#8b949e; opacity:0.6;">PHASE 4: CHRONO-SYNC DEPLOYED</div>
     </div>
 </div>
 <script>
@@ -272,6 +277,58 @@ app.get('/watchlist', async (req, res) => {
                 location.reload();
             }
         </script>
+    </body></html>`);
+});
+
+// --- NEW PAGE: CHRONO-SYNC ---
+app.get('/chrono-sync', async (req, res) => {
+    const list = await getWatchlist();
+    const active = list.filter(s => s.status === 'watching');
+    
+    const renderChronoRow = (s) => {
+        const start = s.startDate ? new Date(s.startDate) : new Date();
+        const now = new Date();
+        const diffDays = Math.max(1, Math.floor((now - start) / (1000 * 60 * 60 * 24)));
+        // Logic: Calculate progress over a 90-day window, or show episode progress if longer
+        const cycleProgress = Math.min(100, Math.floor((diffDays / 90) * 100));
+        const epProgress = Math.min(100, Math.floor((s.currentEpisode / (s.totalEpisodes || 1)) * 100));
+        
+        return `
+        <div class="glass chrono-row">
+            <div style="width:50px; height:70px; border-radius:8px; overflow:hidden; flex-shrink:0;">
+                <img src="${s.poster.startsWith('http') ? s.poster : 'https://image.tmdb.org/t/p/w200'+s.poster}" style="width:100%; height:100%; object-fit:cover;">
+            </div>
+            <div style="flex:1;">
+                <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+                    <span style="font-size:14px; font-weight:800; letter-spacing:0.5px;">${s.title}</span>
+                    <span style="font-size:10px; color:var(--accent); font-family:monospace;">STARDATE: ${start.toLocaleDateString()}</span>
+                </div>
+                <div class="chrono-timeline">
+                    <div class="chrono-progress" style="width:${epProgress}%"></div>
+                </div>
+                <div style="display:flex; justify-content:space-between; margin-top:8px; font-size:9px; opacity:0.5; letter-spacing:1px;">
+                    <span>EPISODE SYNC: ${s.currentEpisode}/${s.totalEpisodes}</span>
+                    <span>SEASONAL CYCLE: ${cycleProgress}%</span>
+                </div>
+            </div>
+        </div>`;
+    };
+
+    res.send(`<html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            ${HUD_STYLE}
+        </head>
+        <body>
+        ${NAV_COMPONENT}
+        <div style="padding:20px; max-width:1000px; margin:auto; padding-top:80px;">
+            <h1 style="font-size:24px; margin:0 0 10px 0; font-weight:900;">CHRONO-<span class="accent-text">SYNC</span></h1>
+            <p style="opacity:0.5; font-size:12px; margin-bottom:40px;">3-MONTH SEASONAL TACTICAL VIEW</p>
+            <div>
+                ${active.map(s => renderChronoRow(s)).join('')}
+                ${active.length === 0 ? '<div style="text-align:center; padding:100px; opacity:0.3;">No Active Timelines.</div>' : ''}
+            </div>
+        </div>
     </body></html>`);
 });
 
