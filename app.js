@@ -259,144 +259,116 @@ app.get('/watchlist', async (req, res) => {
     </body></html>`);
 });
 
-// --- THE REFINED UNIVERSAL RADAR (ACTIVE + SEQUELS + PLAN-TO-WATCH) ---
+// --- THE UNIVERSAL RADAR v6.0 (TEMPORAL GROUPING) ---
 app.get('/chrono-sync', async (req, res) => {
     try {
         res.set('Cache-Control', 'public, max-age=300');
         const list = await getWatchlist();
-        
-        // Step 1: Broaden the net. We MUST include 'watching' to see weekly air dates.
         const targetStatuses = ['watching', 'plan-to-watch', 'hall-of-fame'];
         const vaultItems = list.filter(s => targetStatuses.includes(s.status));
         const forceRefresh = req.query.refresh === 'true';
 
         const now = new Date();
-        const month = now.getMonth();
-        const year = now.getFullYear();
-        const seasons = [{name:'WINTER',m:[0,1,2]},{name:'SPRING',m:[3,4,5]},{name:'SUMMER',m:[6,7,8]},{name:'FALL',m:[9,10,11]}];
-        const currentSeason = seasons.find(s => s.m.includes(month));
-        const seasonProgress = Math.min(100, Math.floor(((now - new Date(year, currentSeason.m[0], 1)) / (90 * 24 * 60 * 60 * 1000)) * 100));
-
-        const liveSchedules = await Promise.all(vaultItems.map(async (show) => {
+        const schedules = await Promise.all(vaultItems.map(async (show) => {
             try {
-                const displayTitle = show.title || "Unknown Intel";
-                const displayPoster = show.poster || show.image || show.imageUrl || "";
-                const isLegend = show.status === 'hall-of-fame';
-                const isActive = show.status === 'watching'; // Identifying shows you are currently on
+                // FALLBACKS TO KILL "UNDEFINED"
+                let title = show.title || "Unknown Asset";
+                let poster = show.poster || show.image || "";
+                let subLabel = "Status: Unknown";
+                let badge = "";
+                let sortWeight = 999; // Lower is sooner
 
-                // --- ANIME RADAR (JIKAN) ---
                 if (show.type === 'anime') {
                     let malId = show.malId;
                     if (!malId || forceRefresh) {
-                        const search = await fetch(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(displayTitle)}&limit=1`).then(r => r.json());
+                        const search = await fetch(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(title)}&limit=1`).then(r => r.json());
                         malId = search.data?.[0]?.mal_id;
                     }
                     const malData = await fetch(`https://api.jikan.moe/v4/anime/${malId}/full`).then(r => r.json());
                     const anime = malData.data;
-
-                    const isAiring = anime.status === "Currently Airing";
-                    const isUpcoming = anime.status === "Not yet aired";
                     
-                    // If it's not airing or upcoming, we only show it if it's currently in your "Watching" list (to avoid losing it)
-                    if (!isAiring && !isUpcoming && !isActive) return null; 
+                    title = anime.title_english || anime.title || title;
+                    poster = anime.images.jpg.large_image_url || poster;
                     
-                    const dayMap = { "Mondays": 1, "Tuesdays": 2, "Wednesdays": 3, "Thursdays": 4, "Fridays": 5, "Saturdays": 6, "Sundays": 0 };
-                    return { 
-                        ...show, isLegend, isActive,
-                        title: displayTitle, poster: displayPoster, 
-                        nextLabel: anime.broadcast?.string || (isAiring ? "Airing Weekly" : "Uplink Confirmed"), 
-                        source: 'JIKAN', 
-                        isToday: now.getDay() === dayMap[anime.broadcast?.day], 
-                        targetHour: 23, 
-                        radarType: isAiring ? 'LIVE' : (isUpcoming ? 'UPCOMING' : 'ACTIVE') 
-                    };
-                } 
-                
-                // --- WESTERN/HBO RADAR (TMDB) ---
-                else {
-                    const tmdbType = (show.type === 'movie' || show.tmdbId?.toString().length < 7) ? 'movie' : 'tv';
+                    if (anime.status === "Currently Airing") {
+                        subLabel = anime.broadcast?.string || "Airing Weekly";
+                        badge = "LIVE";
+                        sortWeight = 1;
+                    } else if (anime.status === "Not yet aired") {
+                        subLabel = anime.aired?.from ? `Starts: ${new Date(anime.aired.from).toLocaleDateString()}` : "Upcoming Season";
+                        badge = "NEXT";
+                        sortWeight = 20;
+                    } else if (show.status === 'watching') {
+                        subLabel = "Catch-up Mode";
+                        badge = "ACTIVE";
+                        sortWeight = 50;
+                    } else { return null; }
+                } else {
+                    // TMDB WESTERN LOGIC
+                    const tmdbType = (show.type === 'movie') ? 'movie' : 'tv';
                     const tmdbUrl = `https://api.themoviedb.org/3/${tmdbType}/${show.tmdbId || show.id}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`;
                     const data = await fetch(tmdbUrl).then(r => r.json());
                     
-                    let nextLabel = "TBA";
-                    let isToday = false;
-                    let radarType = 'ACTIVE';
+                    title = data.name || data.title || title;
+                    poster = `https://image.tmdb.org/t/p/w500${data.poster_path}` || poster;
 
-                    if (tmdbType === 'tv') {
-                        if (data.next_episode_to_air) {
-                            nextLabel = `S${data.next_episode_to_air.season_number}E${data.next_episode_to_air.episode_number} (${data.next_episode_to_air.air_date})`;
-                            isToday = new Date(data.next_episode_to_air.air_date).toDateString() === now.toDateString();
-                            radarType = 'LIVE';
-                        } else if (data.in_production && data.status !== 'Ended') {
-                            nextLabel = "IN PRODUCTION";
-                            radarType = 'UPCOMING';
-                        } else if (!isActive) {
-                            return null; // Don't show ended series unless they are in Active Sync
-                        }
-                    } else {
-                        const rDate = data.release_date || data.first_air_date;
-                        if (rDate && new Date(rDate) > now) {
-                            nextLabel = `RELEASE: ${rDate}`;
-                            isToday = new Date(rDate).toDateString() === now.toDateString();
-                            radarType = 'UPCOMING';
-                        } else if (!isActive) {
-                            return null;
-                        }
-                    }
-
-                    return { ...show, isLegend, isActive, title: displayTitle, poster: displayPoster, nextLabel, source: 'TMDB', isToday, targetHour: 20, radarType };
+                    if (data.next_episode_to_air) {
+                        const airDate = new Date(data.next_episode_to_air.air_date);
+                        subLabel = `S${data.next_episode_to_air.season_number}E${data.next_episode_to_air.episode_number} (${data.next_episode_to_air.air_date})`;
+                        badge = (airDate.toDateString() === now.toDateString()) ? "TODAY" : "NEXT";
+                        sortWeight = (badge === "TODAY") ? 0 : 2;
+                    } else if (data.status === 'In Production' || data.status === 'Returning Series') {
+                        subLabel = "In Production";
+                        badge = "TBA";
+                        sortWeight = 30;
+                    } else if (show.status === 'watching') {
+                        subLabel = "Active Sync";
+                        badge = "LIVE";
+                        sortWeight = 5;
+                    } else { return null; }
                 }
+
+                return { title, poster, subLabel, badge, sortWeight, isLegend: show.status === 'hall-of-fame' };
             } catch (e) { return null; }
         }));
 
-        const activeTimelines = liveSchedules.filter(s => s !== null);
+        const activeTimelines = schedules.filter(s => s !== null).sort((a, b) => a.sortWeight - b.sortWeight);
+
+        // Grouping for the "Clear View"
+        const today = activeTimelines.filter(s => s.sortWeight <= 1);
+        const soon = activeTimelines.filter(s => s.sortWeight > 1 && s.sortWeight < 25);
+        const distant = activeTimelines.filter(s => s.sortWeight >= 25);
+
+        const renderSection = (label, items) => {
+            if (items.length === 0) return "";
+            return `
+                <h2 style="font-size: 10px; color: var(--accent); letter-spacing: 2px; margin: 40px 0 20px 0; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 10px;">${label}</h2>
+                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 20px;">
+                    ${items.map(s => `
+                        <div class="glass" style="position: relative; overflow: hidden; border-radius: 8px;">
+                            <img src="${s.poster}" style="width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block;">
+                            <div style="position: absolute; top: 8px; right: 8px; background: var(--accent); color: black; font-size: 9px; font-weight: 900; padding: 2px 6px; border-radius: 4px;">${s.badge}</div>
+                            ${s.isLegend ? `<div style="position: absolute; top: 8px; left: 8px; background: var(--gold); color: black; font-size: 9px; font-weight: 900; padding: 2px 6px; border-radius: 4px;">LEGEND</div>` : ''}
+                            <div style="padding: 10px; background: linear-gradient(transparent, rgba(0,0,0,0.9));">
+                                <div style="font-size: 11px; font-weight: bold; color: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${s.title}</div>
+                                <div style="font-size: 9px; color: var(--accent); font-family: monospace; margin-top: 4px;">${s.subLabel}</div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>`;
+        };
 
         res.send(`<html>
             <head><meta name="viewport" content="width=device-width, initial-scale=1.0">${HUD_STYLE}</head>
-            <body>
+            <body style="background: #050505;">
                 ${NAV_COMPONENT}
-                <div style="padding:80px 20px; max-width:800px; margin:auto;">
-                    <div class="glass" style="margin-bottom:30px; padding:15px; border:1px solid rgba(255,215,0,0.1);">
-                        <div style="display:flex; justify-content:space-between; font-family:monospace; font-size:10px;">
-                            <span style="color:var(--gold);">ORACLE_RADAR: ${currentSeason.name}</span>
-                            <span>${seasonProgress}% COMPLETE</span>
-                        </div>
-                        <div style="height:4px; background:rgba(255,255,255,0.05); margin-top:10px; border-radius:10px; overflow:hidden;">
-                            <div style="width:${seasonProgress}%; height:100%; background:var(--accent);"></div>
-                        </div>
-                    </div>
-
-                    <h1 style="font-weight:900; margin:0; letter-spacing:-1px;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
-                    
-                    <div style="margin-top:30px;">
-                        ${activeTimelines.map(s => `
-                            <div class="glass" style="margin-bottom:15px; padding:15px; border-left:3px solid ${s.isToday ? 'var(--accent)' : (s.radarType === 'UPCOMING' ? 'var(--gold)' : 'var(--border)')}; display:flex; gap:15px; opacity: ${s.radarType === 'UPCOMING' ? '0.8' : '1'};">
-                                <img src="${s.poster}" style="width:55px; height:80px; border-radius:5px; object-fit:cover;">
-                                <div style="flex:1;">
-                                    <div style="display:flex; justify-content:space-between;">
-                                        <div style="font-weight:bold; color:white; font-size:14px;">${s.title}</div>
-                                        <span style="font-size:8px; opacity:0.3; letter-spacing:1px;">
-                                            ${s.isLegend ? '<span style="color:var(--gold);">[LEGEND]</span> ' : ''}${s.isActive ? '<span style="color:var(--accent);">[ACTIVE]</span> ' : ''}${s.radarType} // ${s.source}
-                                        </span>
-                                    </div>
-                                    <div style="font-family:monospace; font-size:10px; color:var(--accent); margin-top:4px;">${s.isToday ? '● AIRING TODAY' : s.nextLabel}</div>
-                                    ${s.isToday ? `<div style="margin-top:8px; font-size:10px; color:var(--gold); font-family:monospace; font-weight:bold;">UPLINK IN: <span class="timer" data-target="${s.targetHour}">--H --M --S</span></div>` : ''}
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
+                <div style="padding: 80px 20px; max-width: 900px; margin: auto;">
+                    <h1 style="font-weight: 900; margin: 0; letter-spacing: -1px;">CHRONO-<span style="color: var(--accent);">SYNC</span></h1>
+                    ${renderSection("UPLINK TODAY", today)}
+                    ${renderSection("COMING SOON", soon)}
+                    ${renderSection("DISTANT INTEL", distant)}
+                    ${activeTimelines.length === 0 ? '<div class="glass" style="padding: 40px; text-align: center; margin-top: 40px; opacity: 0.5;">NO ACTIVE TIMELINES DETECTED</div>' : ''}
                 </div>
-                <script>
-                    function updateTimers() {
-                        document.querySelectorAll('.timer').forEach(el => {
-                            const t = new Date(); t.setHours(parseInt(el.dataset.target), 0, 0);
-                            let d = Math.max(0, t - new Date());
-                            const h = Math.floor(d / 3600000), m = Math.floor((d % 3600000) / 60000), s = Math.floor((d % 60000) / 1000);
-                            el.innerText = h + "H " + m + "M " + s + "S";
-                        });
-                    }
-                    setInterval(updateTimers, 1000); updateTimers();
-                </script>
             </body></html>`);
     } catch (err) { res.status(500).send("Oracle Error"); }
 });
