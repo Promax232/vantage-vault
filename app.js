@@ -266,7 +266,10 @@ const CACHE_DURATION = 1000 * 60 * 60 * 6; // 6 Hours
 app.get('/chrono-sync', async (req, res) => {
     try {
         const list = await getWatchlist();
-        const targetStatuses = ['watching', 'planned', 'completed'];
+        
+        // --- FIX 1: HALL OF FAME ISOLATION ---
+        // We only track 'watching' and 'planned'. 'Completed' is removed to save resources.
+        const targetStatuses = ['watching', 'planned'];
         const vaultItems = list.filter(s => targetStatuses.includes(s.status));
         
         const now = new Date();
@@ -274,16 +277,10 @@ app.get('/chrono-sync', async (req, res) => {
             const cacheKey = `radar_${show.id}`;
             const cachedEntry = RADAR_CACHE.get(cacheKey);
 
-            // --- OPTIMIZATION: THE LEGACY SHIELD ---
-            // If it's in cache and it's a finished show, we NEVER re-fetch.
             if (cachedEntry) {
-                const isFinished = ["LEGACY", "FINISHED", "LEGEND"].includes(cachedEntry.intel.badge);
+                const isFinished = ["LEGACY", "FINISHED"].includes(cachedEntry.intel.badge);
                 const isExpired = (Date.now() - cachedEntry.timestamp > CACHE_DURATION);
-                
-                // If finished, keep it forever. If not finished, only use if not expired.
-                if (isFinished || !isExpired) {
-                    return cachedEntry.intel;
-                }
+                if (isFinished || !isExpired) return cachedEntry.intel;
             }
 
             // --- STEP 1: INITIALIZE BASE INTEL ---
@@ -291,7 +288,7 @@ app.get('/chrono-sync', async (req, res) => {
                 id: show.id,
                 title: show.title || "Unknown Asset",
                 poster: show.poster || "",
-                subLabel: "DECRYPTING...",
+                subLabel: "VAULT_DATA",
                 badge: show.status.toUpperCase(),
                 sortWeight: 50,
                 type: show.type || 'tv'
@@ -302,15 +299,15 @@ app.get('/chrono-sync', async (req, res) => {
             }
 
             try {
-                // --- STEP 2: MULTIVERSE DATA ACQUISITION ---
                 const cleanId = show.id.toString().split('_')[0];
                 
+                // --- FIX 2: THE ANIME-FIRST HYBRID ---
                 if (show.source === 'mal' || show.type === 'anime') {
+                    // Anime remains ACTIVE (High Precision Tracking)
                     const r = await fetch(`https://api.jikan.moe/v4/anime/${cleanId}`);
                     const { data: a } = await r.json();
                     if (a) {
                         intel.title = a.title_english || a.title;
-                        
                         if (a.status === "Currently Airing") {
                             intel.badge = "LIVE";
                             intel.subLabel = a.broadcast?.string || "Airing Weekly";
@@ -320,54 +317,33 @@ app.get('/chrono-sync', async (req, res) => {
                             intel.subLabel = `PREMIERE: ${a.aired?.from ? new Date(a.aired.from).toLocaleDateString() : "TBA"}`;
                             intel.sortWeight = 10;
                         } else {
-                            // Archive logic for Frieren S1
                             intel.badge = "FINISHED";
                             intel.subLabel = `${a.episodes || '?'} Episodes Total`;
                             intel.sortWeight = 100;
                         }
                     }
                 } else {
-                    // TMDB logic (Chernobyl, Lupin, etc.)
-                    const tmdbUrl = `https://api.themoviedb.org/3/tv/${cleanId}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`;
-                    const data = await fetch(tmdbUrl).then(r => r.json());
-                    
-                    if (data.name) {
-                        intel.title = data.name;
-                        if (data.next_episode_to_air) {
-                            const air = data.next_episode_to_air;
-                            intel.badge = "LIVE";
-                            intel.subLabel = `S${air.season_number}E${air.episode_number} • ${new Date(air.air_date).toLocaleDateString()}`;
-                            intel.sortWeight = 0;
-                        } else if (data.status === "Returning Series" || data.in_production) {
-                            // This is for Lupin (Returning)
-                            intel.badge = "STAGING";
-                            intel.subLabel = "New Episodes Confirmed";
-                            intel.sortWeight = 20;
-                        } else {
-                            // This is for Chernobyl (Ended)
-                            intel.badge = "LEGACY";
-                            intel.subLabel = "Complete Series";
-                            intel.sortWeight = 150;
-                        }
+                    // Western Media becomes PASSIVE (No Deep-Scan/No Decrypting)
+                    // We only do a light check if it's 'watching'. If 'planned', we just show Vault info.
+                    if (show.status === 'watching') {
+                        const tmdbUrl = `https://api.themoviedb.org/3/tv/${cleanId}?api_key=${process.env.TMDB_API_KEY}`;
+                        const data = await fetch(tmdbUrl).then(r => r.json());
+                        intel.title = data.name || intel.title;
+                        intel.badge = "SAVORING";
+                        intel.subLabel = data.status === "Ended" ? "Complete Series" : "In Production";
+                        intel.sortWeight = 5;
+                    } else {
+                        // Planned Western shows are silent (The Batman Approach)
+                        intel.badge = "ON RADAR";
+                        intel.subLabel = "Passive Tracking";
+                        intel.sortWeight = 200;
                     }
                 }
 
-                // --- MASTER OVERRIDES ---
-                if (show.status === 'completed') {
-                    intel.badge = "LEGEND";
-                    intel.sortWeight = 1000;
-                }
-                if (show.status === 'planned' && intel.sortWeight > 50) {
-                    intel.badge = "SCOUT";
-                    intel.subLabel = "Monitoring...";
-                }
-
-                // COMMIT TO CACHE
                 RADAR_CACHE.set(cacheKey, { intel, timestamp: Date.now() });
 
             } catch (err) {
-                intel.subLabel = "UPLINK_OFFLINE";
-                intel.badge = "VAULT";
+                intel.subLabel = "OFFLINE_VAULT";
             }
 
             return intel;
@@ -384,18 +360,18 @@ app.get('/chrono-sync', async (req, res) => {
                     <div style="display:flex; justify-content:space-between; align-items:flex-end; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:20px; margin-bottom:40px;">
                         <div>
                             <h1 style="font-size:35px; font-weight:900; margin:0; letter-spacing:-1.5px;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
-                            <p style="font-family:monospace; font-size:10px; opacity:0.5; margin:5px 0 0 0;">SYSTEM TIME: ${now.toLocaleString()} // NODES: ${sorted.length}</p>
+                            <p style="font-family:monospace; font-size:10px; opacity:0.5; margin:5px 0 0 0;">SYSTEM TIME: ${now.toLocaleString()} // ACTIVE_NODES: ${sorted.length}</p>
                         </div>
                         <div style="display:flex; gap:20px; font-size:10px; font-family:monospace; letter-spacing:1px;">
-                            <span style="color:var(--accent);">● LIVE</span>
+                            <span style="color:var(--accent);">● ACTIVE</span>
                             <span style="color:#f0ad4e;">● UPCOMING</span>
-                            <span style="color:#888;">● ARCHIVE</span>
+                            <span style="color:#555;">● PASSIVE</span>
                         </div>
                     </div>
 
                     <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:35px;">
                         ${sorted.map(s => `
-                            <div class="glass" style="border-radius:20px; overflow:hidden; border:1px solid rgba(255,255,255,0.03); transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), border 0.3s;" onmouseover="this.style.transform='scale(1.03)'; this.style.borderColor='var(--accent)';" onmouseout="this.style.transform='scale(1)'; this.style.borderColor='rgba(255,255,255,0.03)';">
+                            <div class="glass" style="border-radius:20px; overflow:hidden; border:1px solid rgba(255,255,255,0.03); transition: 0.3s;" onmouseover="this.style.borderColor='var(--accent)';" onmouseout="this.style.borderColor='rgba(255,255,255,0.03)';">
                                 <a href="/show/${s.type}/${s.id}" style="text-decoration:none; color:inherit;">
                                     <div style="position:relative; aspect-ratio:2/3; overflow:hidden;">
                                         <img src="${s.poster}" style="width:100%; height:100%; object-fit:cover;">
@@ -420,18 +396,17 @@ app.get('/chrono-sync', async (req, res) => {
                 </style>
             </body></html>`);
     } catch (err) { 
-        res.status(500).send("System Critical Failure: Radar Down."); 
+        res.status(500).send("Critical Radar Failure."); 
     }
 });
 
 function getBadgeColor(badge) {
     const colors = {
-        'LIVE': 'var(--accent)', 'UPCOMING': '#f0ad4e', 'STAGING': '#5bc0de',
-        'LEGEND': 'var(--gold)', 'VAULT': '#888', 'LEGACY': '#444', 'FINISHED': '#444'
+        'LIVE': 'var(--accent)', 'UPCOMING': '#f0ad4e', 'SAVORING': '#5bc0de',
+        'ON RADAR': '#444', 'FINISHED': '#444'
     };
     return colors[badge] || '#ddd';
 }
-
 
 // --- NEW PAGE: PLAN TO WATCH ---
 app.get('/plan-to-watch', async (req, res) => {
