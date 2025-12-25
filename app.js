@@ -2,6 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const mongoose = require('mongoose'); // Swapped from FS
 const Groq = require("groq-sdk");
+const path = require('path'); // ADDED: Required for Objective 1
 require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -10,10 +11,12 @@ const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
 const BRAVE_KEY = process.env.BRAVE_API_KEY; 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 app.use(express.json());
+
 // --- MONGODB CONNECTION ---
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log("Vault Uplink Established (MongoDB)"))
     .catch(err => console.error("Vault Connection Error:", err));
+
 // Schema reflects your EXACT JSON structure
 const showSchema = new mongoose.Schema({
     id: String,
@@ -28,14 +31,32 @@ const showSchema = new mongoose.Schema({
     startDate: String
 });
 const Show = mongoose.model('Show', showSchema);
-// Building on your core logic: Swapping local file for Cloud DB
+
+// Building on your core logic
 const getWatchlist = async () => {
     return await Show.find({});
 };
 const saveWatchlist = async (showData) => {
-    // Finds show by ID and updates it, or creates it if it doesn't exist
     await Show.findOneAndUpdate({ id: showData.id }, showData, { upsert: true });
 };
+
+// --- OBJECTIVE 1: ANDROID MANIFEST (KILLS ADDRESS BAR) ---
+app.get('/manifest.json', (req, res) => {
+    res.json({
+        "name": "Vantage Vault",
+        "short_name": "Vantage",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#05070a",
+        "theme_color": "#00d4ff",
+        "icons": [{
+            "src": "https://cdn-icons-png.flaticon.com/512/8669/8669741.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        }]
+    });
+});
+
 // --- 1. AI CORE (VANTAGE 4-TIER INTELLIGENCE) ---
 app.post('/api/vantage-chat/:id', async (req, res) => {
     const { id } = req.params;
@@ -88,10 +109,28 @@ app.post('/api/vantage-chat/:id', async (req, res) => {
         res.json({ response: chatCompletion.choices[0].message.content });
     } catch (e) { res.status(500).json({ response: "Uplink unstable." }); }
 });
+
 const HUD_STYLE = `
 <style>
 :root { --accent: #00d4ff; --gold: #ffcc00; --red: #ff4c4c; --bg: #05070a; --card: rgba(22, 27, 34, 0.7); --border: #30363d; }
-body { background: var(--bg); color: #f0f6fc; font-family: 'Segoe UI', system-ui; margin: 0; overflow-x: hidden; }
+body { background: var(--bg); color: #f0f6fc; font-family: 'Segoe UI', system-ui; margin: 0; padding: 0; overflow-x: hidden; }
+
+/* FIXING THE "BROKEN" MOBILE VIEW & DESKTOP GRID */
+.main-vault-container { display: flex; flex-direction: column; min-height: 100vh; }
+
+@media (min-width: 1025px) {
+    .split-view { display: flex; height: 100vh; overflow: hidden; }
+    .side-panel { width: 380px; border-right: 1px solid var(--border); overflow-y: auto; background: #0d1117; }
+    .main-panel { flex: 1; overflow-y: auto; padding: 40px; }
+}
+
+@media (max-width: 1024px) {
+    .split-view { display: flex; flex-direction: column; height: auto; overflow: visible; }
+    .side-panel { width: 100% !important; border-right: none; border-bottom: 1px solid var(--border); padding: 20px; box-sizing: border-box; }
+    .main-panel { width: 100% !important; padding: 20px; }
+    .glass { width: 95% !important; margin: 15px auto !important; display: block !important; }
+}
+
 .glass { background: var(--card); backdrop-filter: blur(10px); border: 1px solid var(--border); border-radius: 16px; transition: 0.3s; }
 .glass:hover { border-color: var(--accent); transform: translateY(-5px); }
 .gold-card { border: 1px solid var(--gold) !important; box-shadow: 0 0 15px rgba(255, 204, 0, 0.1); }
@@ -112,27 +151,9 @@ body { background: var(--bg); color: #f0f6fc; font-family: 'Segoe UI', system-ui
 .chrono-future { border-color: #58a6ff; color: #58a6ff; }
 .mic-btn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 18px; margin-left: -40px; z-index: 101; transition: 0.3s; }
 .mic-active { color: var(--red) !important; text-shadow: 0 0 10px var(--red); transform: scale(1.2); }
-@media (max-width: 1024px) {
-    .glass { width: 200px !important; margin: 10px !important; }
-    .input-field#q { width: 250px !important; }
-}
-@media (max-width: 600px) {
-    body { overflow-y: auto; }
-    header div { flex-direction: column; align-items: flex-start !important; gap: 20px; }
-    .input-field#q { width: 100% !important; margin-bottom: 10px; }
-    .mic-btn { margin-left: -35px; margin-top: -10px; }
-    .glass { width: 90% !important; display: block !important; margin: 20px auto !important; }
-    body[style*="flex"] { flex-direction: column !important; height: auto !important; overflow: auto !important; }
-    div[style*="width:380px"] { width: 100% !important; border-right: none !important; border-bottom: 1px solid var(--border); padding: 20px !important; box-sizing: border-box; }
-    div[style*="flex:1"] { padding: 20px !important; }
-}
-@media (min-width: 1800px) {
-    .glass { width: 300px !important; }
-    h1 { font-size: 48px; }
-    .btn { font-size: 14px; padding: 12px 24px; }
-}
 </style>
 `;
+
 const VOICE_SCRIPT = `
 <script>
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -171,11 +192,10 @@ const VOICE_SCRIPT = `
                 }
             };
         }
-    } else {
-        console.log("Speech Recognition not supported in this browser.");
     }
 </script>
 `;
+
 app.get('/watchlist', async (req, res) => {
     const list = await getWatchlist();
     const activeSyncs = list.filter(s => s.currentEpisode < (s.totalEpisodes || 1));
@@ -216,10 +236,16 @@ app.get('/watchlist', async (req, res) => {
             </div>
         </div>`;
     };
-    res.send(`<html><head>${HUD_STYLE}</head><body>
-        <div style="padding:50px; max-width:1400px; margin:auto; text-align:center;">
+    res.send(`<html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <link rel="manifest" href="/manifest.json">
+            ${HUD_STYLE}
+        </head>
+        <body>
+        <div style="padding:20px; max-width:1400px; margin:auto; text-align:center;">
             <header style="border-bottom:1px solid var(--border); padding-bottom:30px; margin-bottom:50px; text-align:left;">
-                <div style="display:flex; justify-content:space-between; align-items:flex-end;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:20px;">
                     <div><h1>VANTAGE <span class="accent-text">VAULT</span></h1></div>
                     <div style="position:relative; display:flex; align-items:center;">
                         <input id="q" class="input-field" style="width:350px;" placeholder="Search MAL or TMDB..." onkeyup="if(event.key==='Enter') search()">
@@ -266,14 +292,8 @@ app.get('/watchlist', async (req, res) => {
                 const r = await fetch('/api/search?q='+q);
                 const d = await r.json();
                 let html = "";
-                if(d.mal.length > 0) {
-                    html += '<div class="search-header">ANIME (MAL)</div>';
-                    html += d.mal.map(i => renderSearchItem(i)).join('');
-                }
-                if(d.tmdb.length > 0) {
-                    html += '<div class="search-header">WORLD MEDIA (TMDB)</div>';
-                    html += d.tmdb.map(i => renderSearchItem(i)).join('');
-                }
+                if(d.mal.length > 0) { html += '<div class="search-header">ANIME (MAL)</div>'; html += d.mal.map(i => renderSearchItem(i)).join(''); }
+                if(d.tmdb.length > 0) { html += '<div class="search-header">WORLD MEDIA (TMDB)</div>'; html += d.tmdb.map(i => renderSearchItem(i)).join(''); }
                 resDiv.innerHTML = html || '<p style="padding:15px;">No results found.</p>';
             }
             function renderSearchItem(i) {
@@ -298,6 +318,7 @@ app.get('/watchlist', async (req, res) => {
         </script>
     </body></html>`);
 });
+
 app.get('/show/:type/:id', async (req, res) => {
     const { type, id } = req.params;
     const watchlist = await getWatchlist();
@@ -316,54 +337,63 @@ app.get('/show/:type/:id', async (req, res) => {
             data = tmdbRes.data;
         }
     } catch(e) { return res.send(`Error retrieving data.`); }
-    // Convert Map back to plain object for display
+    
     const logs = local?.logs ? Object.fromEntries(local.logs) : {};
     const moods = ["Intrigued", "Tense", "Melancholic", "Inspired", "Shocked", "Nostalgic"];
     let displayPoster = local?.poster || data.poster_path;
     if (displayPoster && !displayPoster.startsWith('http')) displayPoster = `https://image.tmdb.org/t/p/w500${displayPoster}`;
-    res.send(`<html><head>${HUD_STYLE}</head><body style="display:flex; height:100vh; overflow:hidden;">
-        <div style="width:380px; border-right:1px solid var(--border); background:#0d1117; padding:40px; overflow-y:auto;">
-            <img src="${displayPoster}" style="width:100%; border-radius:15px; margin-bottom:30px;">
-            <h2 style="margin:0 0 10px 0;">${local?.title || data.title}</h2>
-            ${studioInfo}
-            <p style="font-size:13px; opacity:0.6; line-height:1.6;">${data.overview?.substring(0, 300)}...</p>
-            <div style="text-align:center; margin:30px 0;">
-                <div id="rating-box">
-                    ${[1,2,3,4,5,6,7,8,9,10].map(n => `<button onclick="setRating(${n})" style="width:28px; height:28px; margin:3px; border:1px solid var(--accent); background:${local?.personalRating==n?'var(--accent)':'none'}; color:${local?.personalRating==n?'#000':'var(--accent)'}; border-radius:50%; cursor:pointer; font-size:10px;">${n}</button>`).join('')}
+    
+    res.send(`<html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <link rel="manifest" href="/manifest.json">
+            ${HUD_STYLE}
+        </head>
+        <body>
+        <div class="split-view">
+            <div class="side-panel">
+                <img src="${displayPoster}" style="width:100%; border-radius:15px; margin-bottom:30px;">
+                <h2 style="margin:0 0 10px 0;">${local?.title || data.title}</h2>
+                ${studioInfo}
+                <p style="font-size:13px; opacity:0.6; line-height:1.6;">${data.overview?.substring(0, 300)}...</p>
+                <div style="text-align:center; margin:30px 0;">
+                    <div id="rating-box">
+                        ${[1,2,3,4,5,6,7,8,9,10].map(n => `<button onclick="setRating(${n})" style="width:28px; height:28px; margin:3px; border:1px solid var(--accent); background:${local?.personalRating==n?'var(--accent)':'none'}; color:${local?.personalRating==n?'#000':'var(--accent)'}; border-radius:50%; cursor:pointer; font-size:10px;">${n}</button>`).join('')}
+                    </div>
                 </div>
+                <button onclick="location.href='/watchlist'" class="btn" style="width:100%; margin-bottom:10px;">Vault</button>
+                <button onclick="purgeShow()" class="btn btn-red" style="width:100%; opacity:0.5;">Delete</button>
             </div>
-            <button onclick="location.href='/watchlist'" class="btn" style="width:100%; margin-bottom:10px;">Vault</button>
-            <button onclick="purgeShow()" class="btn btn-red" style="width:100%; opacity:0.5;">Delete</button>
-        </div>
-        <div style="flex:1; padding:60px; overflow-y:auto; background:#05070a;">
-            <div class="glass" style="padding:30px; margin-bottom:40px;">
-                <div id="chat-win" style="height:150px; overflow-y:auto; border-bottom:1px solid var(--border); margin-bottom:20px;">
-                    <div style="color:var(--accent);"><b>VANTAGE:</b> Archive Ready. (Say "Vantage" to wake)</div>
+            <div class="main-panel">
+                <div class="glass" style="padding:30px; margin-bottom:40px;">
+                    <div id="chat-win" style="height:150px; overflow-y:auto; border-bottom:1px solid var(--border); margin-bottom:20px;">
+                        <div style="color:var(--accent);"><b>VANTAGE:</b> Archive Ready. (Say "Vantage" to wake)</div>
+                    </div>
+                    <div style="display:flex; gap:15px; align-items:center;">
+                        <input id="chat-in" class="input-field" style="flex:1;" placeholder="Query..." onkeyup="if(event.key==='Enter') chat()">
+                        <button onclick="startVoiceInput('chat-in')" class="mic-btn" id="mic-icon" style="margin:0; position:static;">🎤</button>
+                        <button class="btn" onclick="chat()">Send</button>
+                    </div>
                 </div>
-                <div style="display:flex; gap:15px; align-items:center;">
-                    <input id="chat-in" class="input-field" style="flex:1;" placeholder="Query..." onkeyup="if(event.key==='Enter') chat()">
-                    <button onclick="startVoiceInput('chat-in')" class="mic-btn" id="mic-icon" style="margin:0; position:static;">🎤</button>
-                    <button class="btn" onclick="chat()">Send</button>
+                <div class="glass" style="padding:30px;">
+                    <div id="mood-picker" style="margin-bottom:15px;">
+                        ${moods.map(m => `<span class="mood-tag" onclick="selectMood(this, '${m}')">${m}</span>`).join('')}
+                    </div>
+                    <textarea id="logText" class="input-field" style="width:100%; height:80px; margin-bottom:15px;" placeholder="Log..."></textarea>
+                    <div style="display:flex; justify-content:space-between;">
+                        <span>EP <input id="ep" type="number" value="${local?.currentEpisode || 0}" class="input-field" style="width:60px;"></span>
+                        <button class="btn" onclick="saveLog()">Save</button>
+                    </div>
                 </div>
-            </div>
-            <div class="glass" style="padding:30px;">
-                <div id="mood-picker" style="margin-bottom:15px;">
-                    ${moods.map(m => `<span class="mood-tag" onclick="selectMood(this, '${m}')">${m}</span>`).join('')}
+                <div id="log-list" style="margin-top:30px;">
+                    ${Object.keys(logs).sort((a,b)=>b-a).map(ep => `
+                        <div class="glass" style="padding:20px; margin-bottom:15px; border-left:4px solid var(--accent);">
+                            <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:10px;">
+                                <b style="color:var(--accent);">EPISODE ${ep}</b><span>${logs[ep].mood || ''} | ${logs[ep].date}</span>
+                            </div>
+                            <p style="margin:0; opacity:0.9;">${logs[ep].text}</p>
+                        </div>`).join('')}
                 </div>
-                <textarea id="logText" class="input-field" style="width:100%; height:80px; margin-bottom:15px;" placeholder="Log..."></textarea>
-                <div style="display:flex; justify-content:space-between;">
-                    <span>EP <input id="ep" type="number" value="${local?.currentEpisode || 0}" class="input-field" style="width:60px;"></span>
-                    <button class="btn" onclick="saveLog()">Save</button>
-                </div>
-            </div>
-            <div id="log-list" style="margin-top:30px;">
-                ${Object.keys(logs).sort((a,b)=>b-a).map(ep => `
-                    <div class="glass" style="padding:20px; margin-bottom:15px; border-left:4px solid var(--accent);">
-                        <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:10px;">
-                            <b style="color:var(--accent);">EPISODE ${ep}</b><span>${logs[ep].mood || ''} | ${logs[ep].date}</span>
-                        </div>
-                        <p style="margin:0; opacity:0.9;">${logs[ep].text}</p>
-                    </div>`).join('')}
             </div>
         </div>
         ${VOICE_SCRIPT}
@@ -391,6 +421,8 @@ app.get('/show/:type/:id', async (req, res) => {
         </script>
     </body></html>`);
 });
+
+// --- REMAINING ROUTES INTACT ---
 app.get('/api/schedule', async (req, res) => {
     const watchlist = await getWatchlist();
     const results = [];
@@ -415,8 +447,7 @@ app.get('/api/schedule', async (req, res) => {
             const date = detail.data.release_date || detail.data.first_air_date;
             if (date) {
                 const releaseDate = new Date(date);
-                const today = new Date();
-                if (releaseDate > today) {
+                if (releaseDate > new Date()) {
                     results.push({ title: item.title, time: releaseDate.toLocaleDateString('en-US', {month: 'short', day: 'numeric'}), type: item.type, status: 'upcoming' });
                 }
             }
@@ -424,6 +455,7 @@ app.get('/api/schedule', async (req, res) => {
     }
     res.json(results);
 });
+
 app.get('/api/search', async (req, res) => {
     try {
         let malResults = [];
@@ -452,6 +484,7 @@ app.get('/api/search', async (req, res) => {
         res.json({ mal: malResults, tmdb: tmdbResults });
     } catch (e) { res.json({ mal: [], tmdb: [] }); }
 });
+
 app.get('/save', async (req, res) => {
     const { id, title, poster, type, source, total } = req.query;
     await saveWatchlist({ 
@@ -463,6 +496,7 @@ app.get('/save', async (req, res) => {
     });
     res.redirect('/watchlist');
 });
+
 app.get('/api/update/:id', async (req, res) => {
     const show = await Show.findOne({ id: req.params.id });
     if (show) {
@@ -474,11 +508,11 @@ app.get('/api/update/:id', async (req, res) => {
         res.json({ success: true });
     } else { res.json({ success: false }); }
 });
+
 app.post('/api/journal/:id', async (req, res) => {
     const show = await Show.findOne({ id: req.params.id });
     if (show) {
         if (!show.logs) show.logs = new Map();
-        // Since logs is a Map in Mongoose, we use .set()
         show.logs.set(req.body.ep.toString(), { 
             text: req.body.text, 
             mood: req.body.mood, 
@@ -488,11 +522,14 @@ app.post('/api/journal/:id', async (req, res) => {
     }
     res.json({ success: true });
 });
+
 app.get('/api/delete-show/:id', async (req, res) => {
     await Show.deleteOne({ id: req.params.id });
     res.redirect('/watchlist');
 });
+
 app.get('/', (req, res) => {
     res.redirect('/watchlist');
 });
+
 app.listen(PORT, () => console.log(`🚀 VANTAGE ONLINE | PORT ${PORT}`));
