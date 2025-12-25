@@ -259,12 +259,10 @@ app.get('/watchlist', async (req, res) => {
     </body></html>`);
 });
 
-// --- THE UNIVERSAL RADAR v10.0 (SURGERY COMPLETE) ---
+// --- THE UNIVERSAL RADAR v10.1 (THE MASTERPIECE PATCH) ---
 app.get('/chrono-sync', async (req, res) => {
     try {
         const list = await getWatchlist();
-        
-        // SYNCED STATUSES: Matches your 'planned' and 'completed' tags exactly
         const targetStatuses = ['watching', 'planned', 'completed'];
         const vaultItems = list.filter(s => targetStatuses.includes(s.status));
         
@@ -275,13 +273,12 @@ app.get('/chrono-sync', async (req, res) => {
                 id: show.id,
                 title: show.title || "Unknown Asset",
                 poster: show.poster || "",
-                subLabel: show.status === 'planned' ? "On Radar" : "Syncing...",
-                badge: show.status === 'completed' ? "LEGEND" : show.status.toUpperCase(),
+                subLabel: show.status === 'planned' ? "ON RADAR" : "SYNCING...",
+                badge: show.status.toUpperCase(),
                 sortWeight: 100,
                 timeframe: "" 
             };
 
-            // Fix Poster URLs for TMDB items
             if (intel.poster && !intel.poster.startsWith('http')) {
                 intel.poster = `https://image.tmdb.org/t/p/w500${intel.poster}`;
             }
@@ -294,20 +291,35 @@ app.get('/chrono-sync', async (req, res) => {
                     
                     if (anime) {
                         intel.title = anime.title_english || anime.title;
-                        // Hard-coded Intelligence for One Punch Man 3
+                        
+                        // 1. HARDCODED OPM3
                         if (intel.title.includes("One Punch Man") && intel.title.includes("3")) {
                             intel.timeframe = "OCT 12, 2025 — DEC 28, 2025";
-                            intel.subLabel = "Sundays @ TV Tokyo";
+                            intel.subLabel = "SUNDAYS @ TV TOKYO";
                             intel.badge = "LIVE";
                             intel.sortWeight = 1;
-                        } else if (anime.status === "Currently Airing") {
+                        } 
+                        // 2. AIRING STATUS
+                        else if (anime.status === "Currently Airing") {
                             intel.badge = "AIRING";
-                            intel.subLabel = anime.broadcast?.string || "Weekly";
+                            intel.subLabel = anime.broadcast?.string || "WEEKLY UPLINK";
                             intel.sortWeight = 2;
+                        } 
+                        // 3. FINISHED SHOWS (Frieren S1 / Lupin Anime)
+                        else if (anime.status === "Finished Airing") {
+                            intel.subLabel = "ARCHIVE COMPLETE";
+                            intel.badge = show.status === 'completed' ? "LEGEND" : "READY";
+                            intel.sortWeight = 50;
+                        }
+                        // 4. FUTURE RELEASES (Frieren S2)
+                        else if (anime.status === "Not yet aired") {
+                            intel.subLabel = "FUTURE INTEL PENDING";
+                            intel.badge = "UPCOMING";
+                            intel.sortWeight = 80;
                         }
                     }
                 } else {
-                    // TMDB (Lupin, Chernobyl, etc.)
+                    // TMDB (Lupin Series, Chernobyl, The Rip)
                     const cleanId = show.id.toString().split('_')[0];
                     const tmdbUrl = `https://api.themoviedb.org/3/tv/${cleanId}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`;
                     const data = await fetch(tmdbUrl).then(r => r.json());
@@ -316,19 +328,29 @@ app.get('/chrono-sync', async (req, res) => {
                         intel.title = data.name;
                         if (data.next_episode_to_air) {
                             intel.badge = "LIVE";
-                            intel.subLabel = `Next: S${data.next_episode_to_air.season_number}E${data.next_episode_to_air.episode_number}`;
+                            intel.subLabel = `S${data.next_episode_to_air.season_number}E${data.next_episode_to_air.episode_number}`;
                             intel.sortWeight = 0;
-                        } else if (data.status === "Returning Series" || data.in_production) {
-                            intel.subLabel = "Production Active";
+                        } 
+                        // 5. FINISHED WESTERN SHOWS (Chernobyl / Lupin)
+                        else if (data.status === "Ended" || data.status === "Canceled") {
+                            intel.subLabel = "FULL SERIES AVAILABLE";
+                            intel.badge = show.status === 'completed' ? "LEGEND" : "SAVOR";
+                            intel.sortWeight = 60;
+                        }
+                        // 6. FUTURE WESTERN (The Rip)
+                        else if (data.status === "In Production" || data.status === "Planned") {
+                            intel.subLabel = "PRODUCTION IN PROGRESS";
                             intel.badge = "NEXT";
-                            intel.sortWeight = 10;
+                            intel.sortWeight = 85;
                         }
                     }
                 }
-            } catch (e) { console.log("Radar skip:", intel.title); }
+            } catch (e) { /* Silent Fallback */ }
 
-            // Adjust weight for the Hall of Fame (Completed) items so they sit at the bottom
-            if (show.status === 'completed') intel.sortWeight = 200;
+            if (show.status === 'completed') {
+                intel.sortWeight = 200;
+                intel.badge = "LEGEND";
+            }
 
             schedules.push(intel);
         }
@@ -341,21 +363,21 @@ app.get('/chrono-sync', async (req, res) => {
                 ${NAV_COMPONENT}
                 <div style="padding:100px 40px; max-width:1200px; margin:auto;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:40px;">
-                        <h1 style="font-weight:900; margin:0;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
-                        <div style="font-size:10px; font-family:monospace; opacity:0.4;">UPLINK_STABLE // DATA_NODES: ${sorted.length}</div>
+                        <h1 style="font-weight:900; margin:0; letter-spacing:-1px;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
+                        <div style="font-size:10px; font-family:monospace; opacity:0.4; letter-spacing:1px;">ORACLE_V10.1 // STATUS_OK</div>
                     </div>
-                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:30px;">
+                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:35px;">
                         ${sorted.map(s => `
                             <a href="/show/${s.type || 'tv'}/${s.id}" style="text-decoration:none; color:inherit;">
-                                <div class="glass" style="border-radius:15px; overflow:hidden; border:1px solid rgba(255,255,255,0.05); transition:0.3s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.05)'">
+                                <div class="glass" style="border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,0.03); transition:all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);" onmouseover="this.style.transform='translateY(-5px)'; this.style.borderColor='var(--accent)';" onmouseout="this.style.transform='translateY(0)'; this.style.borderColor='rgba(255,255,255,0.03)';">
                                     <div style="position:relative; aspect-ratio:2/3;">
-                                        <img src="${s.poster}" style="width:100%; height:100%; object-fit:cover;">
-                                        <div style="position:absolute; top:12px; right:12px; background:var(--accent); color:black; font-weight:900; padding:4px 10px; font-size:10px; border-radius:4px; box-shadow:0 4px 10px rgba(0,0,0,0.5);">${s.badge}</div>
+                                        <img src="${s.poster}" style="width:100%; height:100%; object-fit:cover; ${s.badge === 'LEGEND' ? 'filter: sepia(0.3) brightness(0.8);' : ''}">
+                                        <div style="position:absolute; top:12px; right:12px; background:${s.badge === 'LEGEND' ? 'var(--gold)' : 'var(--accent)'}; color:black; font-weight:900; padding:4px 10px; font-size:10px; border-radius:4px; box-shadow:0 4px 15px rgba(0,0,0,0.6);">${s.badge}</div>
                                     </div>
-                                    <div style="padding:15px; background:rgba(255,255,255,0.02);">
-                                        <div style="font-weight:bold; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:14px;">${s.title}</div>
-                                        <div style="color:var(--accent); font-family:monospace; font-size:10px; margin-top:5px; font-weight:bold;">${s.subLabel}</div>
-                                        ${s.timeframe ? `<div style="font-size:9px; opacity:0.4; margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.1); font-family:monospace;">${s.timeframe}</div>` : ''}
+                                    <div style="padding:18px; background:linear-gradient(to bottom, rgba(255,255,255,0.03), transparent);">
+                                        <div style="font-weight:bold; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:15px; letter-spacing:-0.3px;">${s.title}</div>
+                                        <div style="color:var(--accent); font-family:monospace; font-size:10px; margin-top:6px; font-weight:900; letter-spacing:0.5px; opacity:0.9;">${s.subLabel}</div>
+                                        ${s.timeframe ? `<div style="font-size:9px; opacity:0.4; margin-top:12px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.08); font-family:monospace;">${s.timeframe}</div>` : ''}
                                     </div>
                                 </div>
                             </a>
@@ -363,8 +385,10 @@ app.get('/chrono-sync', async (req, res) => {
                     </div>
                 </div>
             </body></html>`);
-    } catch (err) { res.status(500).send("Critical System Error"); }
+    } catch (err) { res.status(500).send("Surgery Interrupted"); }
 });
+
+
 
 // --- NEW PAGE: PLAN TO WATCH ---
 app.get('/plan-to-watch', async (req, res) => {
