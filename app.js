@@ -261,103 +261,101 @@ app.get('/watchlist', async (req, res) => {
 
 // --- CALIBRATED CHRONO-SYNC (LIVE CALENDAR LOGIC) ---
 app.get('/chrono-sync', async (req, res) => {
-    const list = await getWatchlist();
-    const active = list.filter(s => s.status === 'watching');
-    
-    const renderChronoRow = (s) => {
-        const start = s.startDate ? new Date(s.startDate) : new Date();
-        const now = new Date();
+    try {
+        const list = await getWatchlist();
+        const active = list.filter(s => s.status === 'watching');
         
-        // Calculate Seasonal Cycle (90-day window)
-        const diffDays = Math.max(1, Math.floor((now - start) / (1000 * 60 * 60 * 24)));
-        const cycleProgress = Math.min(100, Math.floor((diffDays / 90) * 100));
-        const epProgress = Math.min(100, Math.floor((s.currentEpisode / (s.totalEpisodes || 1)) * 100));
- 
-        const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-        let airStatus = "";
-        let isToday = false; // DEFINED FOR UI BORDER
-        
-        if (s.manualAirDay) {
-            const targetDayIndex = daysOfWeek.indexOf(s.manualAirDay);
-            const currentDayIndex = now.getDay();
-            let daysToNext = (targetDayIndex - currentDayIndex + 7) % 7;
-            if (daysToNext === 0) {
-                isToday = true;
-                airStatus = `<span style="color:var(--accent); font-weight:bold; animation: pulse 2s infinite;">● AIRING TODAY (${s.manualAirDay})</span>`;
+        const renderChronoRow = (s) => {
+            const start = s.startDate ? new Date(s.startDate) : new Date();
+            const now = new Date();
+            
+            const diffDays = Math.max(1, Math.floor((now - start) / (1000 * 60 * 60 * 24)));
+            const cycleProgress = Math.min(100, Math.floor((diffDays / 90) * 100));
+            const epProgress = Math.min(100, Math.floor((s.currentEpisode / (s.totalEpisodes || 1)) * 100));
+     
+            const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            let airStatus = "";
+            let isToday = false; 
+            
+            if (s.manualAirDay) {
+                const targetDayIndex = daysOfWeek.indexOf(s.manualAirDay);
+                const currentDayIndex = now.getDay();
+                let daysToNext = (targetDayIndex - currentDayIndex + 7) % 7;
+                if (daysToNext === 0) {
+                    isToday = true;
+                    airStatus = `<span style="color:var(--accent); font-weight:bold; animation: pulse 2s infinite;">● AIRING TODAY (${s.manualAirDay})</span>`;
+                } else {
+                    const nextDate = new Date();
+                    nextDate.setDate(now.getDate() + daysToNext);
+                    airStatus = `NEXT UPLINK: ${nextDate.toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric'})}`;
+                }
             } else {
+                const daysSinceStart = Math.floor((now - start) / (1000 * 60 * 60 * 24));
+                const daysToNext = 7 - (daysSinceStart % 7);
+                isToday = (daysToNext === 7 || daysToNext === 0);
                 const nextDate = new Date();
-                nextDate.setDate(now.getDate() + daysToNext);
-                airStatus = `NEXT UPLINK: ${nextDate.toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric'})}`;
+                nextDate.setDate(now.getDate() + (daysToNext === 7 ? 0 : daysToNext));
+                airStatus = isToday ? 
+                    `<span style="color:var(--accent); font-weight:bold; animation: pulse 2s infinite;">● AIRING TODAY</span>` : 
+                    `NEXT UPLINK: ${nextDate.toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric'})}`;
             }
-        } else {
-            const daysSinceStart = Math.floor((now - start) / (1000 * 60 * 60 * 24));
-            const daysToNext = 7 - (daysSinceStart % 7);
-            isToday = (daysToNext === 7 || daysToNext === 0);
-            const nextDate = new Date();
-            nextDate.setDate(now.getDate() + (daysToNext === 7 ? 0 : daysToNext));
-            airStatus = isToday ? 
-                `<span style="color:var(--accent); font-weight:bold; animation: pulse 2s infinite;">● AIRING TODAY</span>` : 
-                `NEXT UPLINK: ${nextDate.toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric'})}`;
-        }
 
-        return `
-        <div class="glass chrono-row" style="margin-bottom:20px; border-left: 2px solid ${isToday ? 'var(--accent)' : 'var(--border)'};">
-            <div style="width:60px; height:85px; border-radius:10px; overflow:hidden; flex-shrink:0; border:1px solid var(--border);">
-                <img src="${s.poster.startsWith('http') ? s.poster : 'https://image.tmdb.org/t/p/w200'+s.poster}" style="width:100%; height:100%; object-fit:cover;">
+            return `
+            <div class="glass chrono-row" style="margin-bottom:20px; border-left: 2px solid ${isToday ? 'var(--accent)' : 'var(--border)'};">
+                <div style="width:60px; height:85px; border-radius:10px; overflow:hidden; flex-shrink:0; border:1px solid var(--border);">
+                    <img src="${s.poster.startsWith('http') ? s.poster : 'https://image.tmdb.org/t/p/w200'+s.poster}" style="width:100%; height:100%; object-fit:cover;">
+                </div>
+                <div style="flex:1;">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">
+                        <div>
+                            <div style="font-size:15px; font-weight:800; letter-spacing:0.5px; color:white;">${s.title}</div>
+                            <div style="font-size:10px; color:var(--accent); margin-top:4px; font-family:monospace; letter-spacing:1px;">${airStatus}</div>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-size:10px; opacity:0.5;">EP ${s.currentEpisode} / ${s.totalEpisodes}</div>
+                        </div>
+                    </div>
+                    
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <div class="chrono-timeline" style="height:6px; flex:1; background:rgba(255,255,255,0.03);">
+                            <div class="chrono-progress" style="width:${epProgress}%; background:var(--accent);"></div>
+                        </div>
+                        <span style="font-size:9px; font-family:monospace; width:30px; opacity:0.6;">${epProgress}%</span>
+                    </div>
+
+                    <div style="margin-top:12px; display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:8px; opacity:0.4; letter-spacing:1px;">SET_FIXED_DAY:</span>
+                        <select onchange="window.location.href='/set-air-day?id=${s._id}&day='+this.value" style="background:rgba(255,255,255,0.05); color:var(--accent); border:1px solid var(--border); font-size:9px; border-radius:4px; padding:2px 4px; cursor:pointer; font-family:monospace;">
+                            <option value="">AUTO-DETECT</option>
+                            ${daysOfWeek.map(d => `<option value="${d}" ${s.manualAirDay === d ? 'selected' : ''}>${d.toUpperCase()}</option>`).join('')}
+                        </select>
+                    </div>
+
+                    <div style="display:flex; justify-content:space-between; margin-top:10px;">
+                         <div style="font-size:8px; opacity:0.4; letter-spacing:1px; text-transform:uppercase;">Tactical Window: ${cycleProgress}% of 90-Day Cycle</div>
+                    </div>
+                </div>
+            </div>`;
+        };
+
+        res.send(`<html>
+            <head>
+                <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+                ${HUD_STYLE}
+                <style>@keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }</style>
+            </head>
+            <body>
+            ${NAV_COMPONENT}
+            <div style="padding:20px; max-width:800px; margin:auto; padding-top:80px;">
+                <h1 style="font-size:24px; margin:0; font-weight:900;">CHRONO-<span class="accent-text">SYNC</span></h1>
+                <p style="opacity:0.5; font-size:11px; letter-spacing:1px; margin-bottom:30px;">LIVE AIRING CALENDAR</p>
+                ${active.map(s => renderChronoRow(s)).join('')}
+                ${active.length === 0 ? '<div style="text-align:center; padding:100px; opacity:0.3;">No Active Timelines.</div>' : ''}
             </div>
-            <div style="flex:1;">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">
-                    <div>
-                        <div style="font-size:15px; font-weight:800; letter-spacing:0.5px; color:white;">${s.title}</div>
-                        <div style="font-size:10px; color:var(--accent); margin-top:4px; font-family:monospace; letter-spacing:1px;">${airStatus}</div>
-                    </div>
-                    <div style="text-align:right;">
-                        <div style="font-size:10px; opacity:0.5;">EP ${s.currentEpisode} / ${s.totalEpisodes}</div>
-                    </div>
-                </div>
-                
-                <div style="display:flex; gap:10px; align-items:center;">
-                    <div class="chrono-timeline" style="height:6px; background:rgba(255,255,255,0.03);">
-                        <div class="chrono-progress" style="width:${epProgress}%; background:var(--accent);"></div>
-                    </div>
-                    <span style="font-size:9px; font-family:monospace; width:30px; opacity:0.6;">${epProgress}%</span>
-                </div>
-
-                <div style="margin-top:12px; display:flex; align-items:center; gap:8px;">
-                    <span style="font-size:8px; opacity:0.4; letter-spacing:1px;">SET_FIXED_DAY:</span>
-                    <select onchange="window.location.href='/set-air-day?id=${s._id}&day='+this.value" style="background:rgba(255,255,255,0.05); color:var(--accent); border:1px solid var(--border); font-size:9px; border-radius:4px; padding:2px 4px; cursor:pointer; font-family:monospace;">
-                        <option value="">AUTO-DETECT</option>
-                        ${daysOfWeek.map(d => `<option value="${d}" ${s.manualAirDay === d ? 'selected' : ''}>${d.toUpperCase()}</option>`).join('')}
-                    </select>
-                </div>
-
-                <div style="display:flex; justify-content:space-between; margin-top:10px;">
-                     <div style="font-size:8px; opacity:0.4; letter-spacing:1px; text-transform:uppercase;">Tactical Window: ${cycleProgress}% of 90-Day Cycle</div>
-                     ${s.currentEpisode >= s.totalEpisodes ? '<span style="font-size:8px; color:var(--gold);">COMPLETION IMMINENT</span>' : ''}
-                </div>
-            </div>
-        </div>`;
-    };
-
-    res.send(`<html>
-        <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-            ${HUD_STYLE}
-            <style>
-                @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
-            </style>
-        </head>
-        <body>
-        ${NAV_COMPONENT}
-        <div style="padding:20px; max-width:800px; margin:auto; padding-top:80px;">
-            <h1 style="font-size:24px; margin:0; font-weight:900;">CHRONO-<span class="accent-text">SYNC</span></h1>
-            <p style="opacity:0.5; font-size:11px; letter-spacing:1px; margin-bottom:30px;">LIVE AIRING CALENDAR</p>
-            ${active.map(s => renderChronoRow(s)).join('')}
-        </div>
-    </body></html>`);
+        </body></html>`);
+    } catch (err) { res.status(500).send("Sync Error"); }
 });
 
-// THIS GOES OUTSIDE THE CHRONO-SYNC ROUTE
 app.get('/set-air-day', async (req, res) => {
     const { id, day } = req.query;
     const { ObjectId } = require('mongodb'); 
@@ -365,52 +363,6 @@ app.get('/set-air-day', async (req, res) => {
     res.redirect('/chrono-sync');
 });
 
-
-    res.send(`<html>
-        <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-            ${HUD_STYLE}
-            <style>
-                @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
-            </style>
-        </head>
-        <body>
-        ${NAV_COMPONENT}
-        <div style="padding:20px; max-width:800px; margin:auto; padding-top:80px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:40px;">
-                <div>
-                    <h1 style="font-size:24px; margin:0; font-weight:900;">CHRONO-<span class="accent-text">SYNC</span></h1>
-                    <p style="opacity:0.5; font-size:11px; letter-spacing:1px;">LIVE AIRING CALENDAR & CYCLE TRACKER</p>
-                </div>
-                <div class="glass" style="padding:10px 15px; text-align:right;">
-                    <div style="font-size:9px; opacity:0.6;">CURRENT_STARDATE</div>
-                    <div style="font-size:12px; font-weight:bold; color:var(--accent);">${new Date().toLocaleDateString('en-US', {month: 'long', day: 'numeric', year: 'numeric'})}</div>
-                </div>
-            </div>
-            <div>
-                ${active.map(s => renderChronoRow(s)).join('')}
-                ${active.length === 0 ? '<div style="text-align:center; padding:100px; opacity:0.3; border:1px dashed var(--border); border-radius:20px;">No Active Timelines. Sync a show to begin tracking.</div>' : ''}
-            </div>
-        </div>
-    </body></html>`);
-
-
-    res.send(`<html>
-        <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-            ${HUD_STYLE}
-        </head>
-        <body>
-        ${NAV_COMPONENT}
-        <div style="padding:20px; max-width:1000px; margin:auto; padding-top:80px;">
-            <h1 style="font-size:24px; margin:0 0 10px 0; font-weight:900;">CHRONO-<span class="accent-text">SYNC</span></h1>
-            <p style="opacity:0.5; font-size:12px; margin-bottom:40px;">3-MONTH SEASONAL TACTICAL VIEW</p>
-            <div>
-                ${active.map(s => renderChronoRow(s)).join('')}
-                ${active.length === 0 ? '<div style="text-align:center; padding:100px; opacity:0.3;">No Active Timelines.</div>' : ''}
-            </div>
-        </div>
-    </body></html>`);
 
 // --- NEW PAGE: PLAN TO WATCH ---
 app.get('/plan-to-watch', async (req, res) => {
