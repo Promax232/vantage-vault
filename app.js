@@ -259,80 +259,79 @@ app.get('/watchlist', async (req, res) => {
     </body></html>`);
 });
 
-// --- CALIBRATED CHRONO-SYNC (LIVE CALENDAR LOGIC) ---
+// --- THE HYBRID ORACLE (AUTO-ID + COUNTDOWN + SEASONAL PROGRESS) ---
 app.get('/chrono-sync', async (req, res) => {
     try {
         const list = await getWatchlist();
-        const active = list.filter(s => s.status === 'watching');
-        
-        const renderChronoRow = (s) => {
-            const start = s.startDate ? new Date(s.startDate) : new Date();
-            const now = new Date();
-            
-            const diffDays = Math.max(1, Math.floor((now - start) / (1000 * 60 * 60 * 24)));
-            const cycleProgress = Math.min(100, Math.floor((diffDays / 90) * 100));
-            const epProgress = Math.min(100, Math.floor((s.currentEpisode / (s.totalEpisodes || 1)) * 100));
-     
-            const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-            let airStatus = "";
-            let isToday = false; 
-            
-            if (s.manualAirDay) {
-                const targetDayIndex = daysOfWeek.indexOf(s.manualAirDay);
-                const currentDayIndex = now.getDay();
-                let daysToNext = (targetDayIndex - currentDayIndex + 7) % 7;
-                if (daysToNext === 0) {
-                    isToday = true;
-                    airStatus = `<span style="color:var(--accent); font-weight:bold; animation: pulse 2s infinite;">● AIRING TODAY (${s.manualAirDay})</span>`;
+        const watching = list.filter(s => s.status === 'watching');
+        const forceRefresh = req.query.refresh === 'true';
+
+        // --- SEASONAL PROGRESS CALCULATION ---
+        const now = new Date();
+        const month = now.getMonth();
+        const year = now.getFullYear();
+        const seasons = [
+            { name: 'WINTER', months: [0, 1, 2] },
+            { name: 'SPRING', months: [3, 4, 5] },
+            { name: 'SUMMER', months: [6, 7, 8] },
+            { name: 'FALL', months: [9, 10, 11] }
+        ];
+        const currentSeason = seasons.find(s => s.months.includes(month));
+        const seasonStart = new Date(year, currentSeason.months[0], 1);
+        const seasonEnd = new Date(year, currentSeason.months[2] + 1, 0);
+        const totalSeasonDays = (seasonEnd - seasonStart) / (1000 * 60 * 60 * 24);
+        const daysPassed = (now - seasonStart) / (1000 * 60 * 60 * 24);
+        const seasonProgress = Math.min(100, Math.floor((daysPassed / totalSeasonDays) * 100));
+
+        const liveSchedules = await Promise.all(watching.map(async (show) => {
+            try {
+                if (show.type === 'anime') {
+                    let malId = show.malId;
+                    if (!malId || forceRefresh) {
+                        const searchRes = await fetch(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(show.title)}&limit=1`);
+                        const searchData = await searchRes.json();
+                        if (searchData.data && searchData.data.length > 0) {
+                            malId = searchData.data[0].mal_id;
+                            await db.collection('watchlist').updateOne({ _id: show._id }, { $set: { malId: malId } });
+                        }
+                    }
+                    const malResponse = await fetch(`https://api.jikan.moe/v4/anime/${malId}/full`);
+                    const malData = await malResponse.json();
+                    const anime = malData.data;
+                    const dayMap = { "Mondays": 1, "Tuesdays": 2, "Wednesdays": 3, "Thursdays": 4, "Fridays": 5, "Saturdays": 6, "Sundays": 0 };
+                    const broadcastDay = dayMap[anime.broadcast?.day] ?? -1;
+                    const isToday = now.getDay() === broadcastDay;
+
+                    return { ...show, malId, nextEpDate: anime.broadcast?.string || "Schedule Unknown", status: anime.status, source: 'JIKAN', airing: anime.airing, isToday, targetHour: 23 };
                 } else {
-                    const nextDate = new Date();
-                    nextDate.setDate(now.getDate() + daysToNext);
-                    airStatus = `NEXT UPLINK: ${nextDate.toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric'})}`;
+                    const tmdbRes = await fetch(`https://api.themoviedb.org/3/tv/${show.tmdbId}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`);
+                    const data = await tmdbRes.json();
+                    const next = data.next_episode_to_air;
+                    const isToday = next ? new Date(next.air_date).toDateString() === now.toDateString() : false;
+                    return { ...show, nextEp: next, inProduction: data.in_production, source: 'TMDB', isToday, targetHour: 20 };
                 }
-            } else {
-                const daysSinceStart = Math.floor((now - start) / (1000 * 60 * 60 * 24));
-                const daysToNext = 7 - (daysSinceStart % 7);
-                isToday = (daysToNext === 7 || daysToNext === 0);
-                const nextDate = new Date();
-                nextDate.setDate(now.getDate() + (daysToNext === 7 ? 0 : daysToNext));
-                airStatus = isToday ? 
-                    `<span style="color:var(--accent); font-weight:bold; animation: pulse 2s infinite;">● AIRING TODAY</span>` : 
-                    `NEXT UPLINK: ${nextDate.toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric'})}`;
-            }
+            } catch (e) { return { ...show, nextEp: null, airing: false }; }
+        }));
 
+        const activeTimelines = liveSchedules.filter(s => s.airing || s.nextEp || s.status === "Currently Airing");
+
+        const renderOracleRow = (s) => {
+            const statusColor = s.isToday ? 'var(--accent)' : 'var(--border)';
+            const label = s.isToday ? `● AIRING TODAY` : (s.source === 'JIKAN' ? s.nextEpDate : `NEXT: ${s.nextEp?.air_date}`);
             return `
-            <div class="glass chrono-row" style="margin-bottom:20px; border-left: 2px solid ${isToday ? 'var(--accent)' : 'var(--border)'};">
-                <div style="width:60px; height:85px; border-radius:10px; overflow:hidden; flex-shrink:0; border:1px solid var(--border);">
-                    <img src="${s.poster.startsWith('http') ? s.poster : 'https://image.tmdb.org/t/p/w200'+s.poster}" style="width:100%; height:100%; object-fit:cover;">
-                </div>
+            <div class="glass" style="margin-bottom:15px; padding:15px; border-left:3px solid ${statusColor}; display:flex; gap:15px; position:relative;">
+                <img src="${s.poster}" style="width:55px; height:80px; border-radius:5px; object-fit:cover; border:1px solid rgba(255,255,255,0.1);">
                 <div style="flex:1;">
-                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">
-                        <div>
-                            <div style="font-size:15px; font-weight:800; letter-spacing:0.5px; color:white;">${s.title}</div>
-                            <div style="font-size:10px; color:var(--accent); margin-top:4px; font-family:monospace; letter-spacing:1px;">${airStatus}</div>
-                        </div>
-                        <div style="text-align:right;">
-                            <div style="font-size:10px; opacity:0.5;">EP ${s.currentEpisode} / ${s.totalEpisodes}</div>
-                        </div>
+                    <div style="display:flex; justify-content:space-between;">
+                        <div style="font-weight:bold; color:white; font-size:14px;">${s.title}</div>
+                        <span style="font-size:8px; opacity:0.3; letter-spacing:1px;">${s.source}</span>
                     </div>
-                    
-                    <div style="display:flex; gap:10px; align-items:center;">
-                        <div class="chrono-timeline" style="height:6px; flex:1; background:rgba(255,255,255,0.03);">
-                            <div class="chrono-progress" style="width:${epProgress}%; background:var(--accent);"></div>
-                        </div>
-                        <span style="font-size:9px; font-family:monospace; width:30px; opacity:0.6;">${epProgress}%</span>
+                    <div style="font-family:monospace; font-size:10px; color:var(--accent); margin-top:4px;">
+                        ${label} ${s.nextEp ? '(EP '+s.nextEp.episode_number+')' : ''}
                     </div>
-
-                    <div style="margin-top:12px; display:flex; align-items:center; gap:8px;">
-                        <span style="font-size:8px; opacity:0.4; letter-spacing:1px;">SET_FIXED_DAY:</span>
-                        <select onchange="window.location.href='/set-air-day?id=${s._id}&day='+this.value" style="background:rgba(255,255,255,0.05); color:var(--accent); border:1px solid var(--border); font-size:9px; border-radius:4px; padding:2px 4px; cursor:pointer; font-family:monospace;">
-                            <option value="">AUTO-DETECT</option>
-                            ${daysOfWeek.map(d => `<option value="${d}" ${s.manualAirDay === d ? 'selected' : ''}>${d.toUpperCase()}</option>`).join('')}
-                        </select>
-                    </div>
-
-                    <div style="display:flex; justify-content:space-between; margin-top:10px;">
-                         <div style="font-size:8px; opacity:0.4; letter-spacing:1px; text-transform:uppercase;">Tactical Window: ${cycleProgress}% of 90-Day Cycle</div>
+                    ${s.isToday ? `<div style="margin-top:8px; font-size:10px; color:var(--gold); font-family:monospace; font-weight:bold;">UPLINK IN: <span class="timer" data-target="${s.targetHour}">--H --M --S</span></div>` : ''}
+                    <div style="margin-top:12px; height:2px; background:rgba(255,255,255,0.05); border-radius:2px;">
+                        <div style="width:${(s.currentEpisode/(s.totalEpisodes||1))*100}%; height:100%; background:var(--accent); box-shadow:0 0 10px var(--accent);"></div>
                     </div>
                 </div>
             </div>`;
@@ -340,29 +339,60 @@ app.get('/chrono-sync', async (req, res) => {
 
         res.send(`<html>
             <head>
-                <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 ${HUD_STYLE}
-                <style>@keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }</style>
+                <style>
+                    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+                    .timer { letter-spacing: 1px; }
+                    .refresh-btn:active { transform: scale(0.95); opacity: 0.5; }
+                    .seasonal-bar { height: 4px; background: rgba(255,255,255,0.05); border-radius: 10px; overflow: hidden; margin: 10px 0; }
+                    .seasonal-progress { height: 100%; background: linear-gradient(90deg, var(--border), var(--accent)); transition: width 1s ease; }
+                </style>
             </head>
             <body>
-            ${NAV_COMPONENT}
-            <div style="padding:20px; max-width:800px; margin:auto; padding-top:80px;">
-                <h1 style="font-size:24px; margin:0; font-weight:900;">CHRONO-<span class="accent-text">SYNC</span></h1>
-                <p style="opacity:0.5; font-size:11px; letter-spacing:1px; margin-bottom:30px;">LIVE AIRING CALENDAR</p>
-                ${active.map(s => renderChronoRow(s)).join('')}
-                ${active.length === 0 ? '<div style="text-align:center; padding:100px; opacity:0.3;">No Active Timelines.</div>' : ''}
-            </div>
-        </body></html>`);
-    } catch (err) { res.status(500).send("Sync Error"); }
-});
+                ${NAV_COMPONENT}
+                <div style="padding:80px 20px; max-width:800px; margin:auto;">
+                    <div class="glass" style="margin-bottom:30px; padding:15px; border:1px solid rgba(255,215,0,0.1);">
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <span style="font-size:10px; font-family:monospace; letter-spacing:2px; color:var(--gold);">CURRENT_SEASON: ${currentSeason.name} ${year}</span>
+                            <span style="font-size:10px; font-family:monospace; opacity:0.6;">${seasonProgress}% COMPLETE</span>
+                        </div>
+                        <div class="seasonal-bar"><div class="seasonal-progress" style="width:${seasonProgress}%"></div></div>
+                        <div style="font-size:8px; opacity:0.4; letter-spacing:1px; text-align:right;">TRANSITION TO ${month > 8 ? 'WINTER' : 'NEXT'} SEASON IN ~${Math.floor(totalSeasonDays - daysPassed)} DAYS</div>
+                    </div>
 
-app.get('/set-air-day', async (req, res) => {
-    const { id, day } = req.query;
-    const { ObjectId } = require('mongodb'); 
-    await db.collection('watchlist').updateOne({ _id: new ObjectId(id) }, { $set: { manualAirDay: day } });
-    res.redirect('/chrono-sync');
-});
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:40px;">
+                        <div>
+                            <h1 style="font-weight:900; margin:0; letter-spacing:-1px;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
+                            <div style="font-size:10px; opacity:0.5; letter-spacing:3px;">ORACLE v4.0 // SEASONAL_INTEL</div>
+                        </div>
+                        <button onclick="window.location.href='/chrono-sync?refresh=true'" class="glass refresh-btn" style="padding:8px 12px; font-size:10px; color:var(--accent); border:1px solid var(--accent); cursor:pointer; font-family:monospace;">FORCE_SYNC</button>
+                    </div>
 
+                    ${activeTimelines.length > 0 ? activeTimelines.map(s => renderOracleRow(s)).join('') : 
+                    '<div class="glass" style="padding:40px; text-align:center; opacity:0.3; border:1px dashed var(--border);">NO ACTIVE TIMELINES DETECTED</div>'}
+                </div>
+                <script>
+                    function updateTimers() {
+                        document.querySelectorAll('.timer').forEach(el => {
+                            const targetHour = parseInt(el.dataset.target);
+                            const now = new Date();
+                            const target = new Date();
+                            target.setHours(targetHour, 0, 0);
+                            let diff = target - now;
+                            if (diff < 0) diff = 0;
+                            const h = Math.floor(diff / 3600000);
+                            const m = Math.floor((diff % 3600000) / 60000);
+                            const s = Math.floor((diff % 60000) / 1000);
+                            el.innerText = h + "H " + m + "M " + s + "S";
+                        });
+                    }
+                    setInterval(updateTimers, 1000);
+                    updateTimers();
+                </script>
+            </body></html>`);
+    } catch (err) { res.status(500).send("Oracle Error"); }
+});
 
 // --- NEW PAGE: PLAN TO WATCH ---
 app.get('/plan-to-watch', async (req, res) => {
