@@ -11,12 +11,10 @@ const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
 const BRAVE_KEY = process.env.BRAVE_API_KEY; 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 app.use(express.json());
-
 // --- MONGODB CONNECTION ---
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log("Vault Uplink Established (MongoDB)"))
     .catch(err => console.error("Vault Connection Error:", err));
-
 const showSchema = new mongoose.Schema({
     id: String,
     title: String,
@@ -31,14 +29,12 @@ const showSchema = new mongoose.Schema({
     startDate: String
 });
 const Show = mongoose.model('Show', showSchema);
-
 const getWatchlist = async () => {
     return await Show.find({});
 };
 const saveWatchlist = async (showData) => {
     await Show.findOneAndUpdate({ id: showData.id }, showData, { upsert: true });
 };
-
 // --- ANDROID MANIFEST (DYNAMIC) ---
 app.get('/manifest.json', (req, res) => {
     res.json({
@@ -57,7 +53,6 @@ app.get('/manifest.json', (req, res) => {
         }]
     });
 });
-
 // --- AI CORE (VANTAGE INTELLIGENCE) ---
 app.post('/api/vantage-chat/:id', async (req, res) => {
     const { id } = req.params;
@@ -70,7 +65,6 @@ app.post('/api/vantage-chat/:id', async (req, res) => {
     const needsLiveIntel = isExplicitTrigger || /season|release|date|news|future|update|coming|when|latest|new|renewal|production|streaming|where/i.test(cleanMessage);
     let externalIntel = "";
     let tierUsed = "Internal Archive";
-
     if (show && needsLiveIntel) {
         if (process.env.TAVILY_API_KEY) {
             try {
@@ -87,7 +81,6 @@ app.post('/api/vantage-chat/:id', async (req, res) => {
             } catch (e) { console.log("Tavily failed"); }
         }
     }
-
     try {
         const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
         const chatCompletion = await groq.chat.completions.create({
@@ -100,24 +93,20 @@ app.post('/api/vantage-chat/:id', async (req, res) => {
         res.json({ response: chatCompletion.choices[0].message.content });
     } catch (e) { res.status(500).json({ response: "Uplink unstable." }); }
 });
-
 // --- UI SYSTEMS (APPLE-POLISHED REFINE) ---
 const HUD_STYLE = `
 <style>
 :root { --accent: #00d4ff; --gold: #ffcc00; --red: #ff4c4c; --bg: #05070a; --card: rgba(22, 27, 34, 0.6); --border: rgba(48, 54, 61, 0.5); }
 body { background: var(--bg); color: #f0f6fc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
-
 /* LAYOUT ENGINE */
 .split-view { display: flex; flex-direction: column; min-height: 100vh; }
 .side-panel { width: 100%; padding: 25px; box-sizing: border-box; }
 .main-panel { width: 100%; padding: 20px; box-sizing: border-box; }
-
 @media (min-width: 1025px) {
     .split-view { flex-direction: row; height: 100vh; overflow: hidden; }
     .side-panel { width: 420px; border-right: 1px solid var(--border); overflow-y: auto; background: rgba(255,255,255,0.02); }
     .main-panel { flex: 1; overflow-y: auto; padding: 60px; }
 }
-
 /* UI ELEMENTS */
 .glass { background: var(--card); backdrop-filter: blur(25px); border: 0.5px solid var(--border); border-radius: 18px; transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1); }
 .glass:hover { border-color: var(--accent); transform: translateY(-2px); box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
@@ -126,7 +115,6 @@ body { background: var(--bg); color: #f0f6fc; font-family: -apple-system, BlinkM
 .input-field:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(0,212,255,0.1); }
 .btn { background: transparent; border: 1px solid var(--accent); color: var(--accent); padding: 12px 24px; cursor: pointer; border-radius: 10px; font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: 1.5px; transition: 0.3s; }
 .btn:hover { background: var(--accent); color: black; }
-
 /* SIDEBAR REFINEMENT */
 #nav-trigger { position: fixed; top: 0; left: 0; width: 15px; height: 100vh; z-index: 999; cursor: pointer; }
 .sidebar { position: fixed; top: 0; left: -320px; width: 300px; height: 100vh; background: rgba(5, 7, 10, 0.98); backdrop-filter: blur(30px); border-right: 1px solid var(--border); z-index: 1001; transition: 0.5s cubic-bezier(0.19, 1, 0.22, 1); padding: 50px 30px; display: flex; flex-direction: column; visibility: hidden; }
@@ -136,21 +124,17 @@ body { background: var(--bg); color: #f0f6fc; font-family: -apple-system, BlinkM
 .nav-burger { position: fixed; left: 25px; top: 25px; z-index: 1000; background: rgba(22, 27, 34, 0.5); backdrop-filter: blur(10px); border: 1px solid var(--border); color: var(--accent); width: 45px; height: 45px; border-radius: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 20px; }
 .overlay { position: fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.7); z-index:1000; opacity:0; pointer-events:none; transition:0.4s; visibility: hidden; }
 .overlay.active { opacity:1; pointer-events:all; visibility: visible; }
-
 /* POSTER GRID */
 .poster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 20px; padding: 10px; }
 @media (max-width: 600px) { .poster-grid { grid-template-columns: 1fr 1fr; gap: 12px; } }
-
 .rating-orb { width: 34px; height: 34px; margin: 5px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: #8b949e; border-radius: 50%; cursor: pointer; font-size: 12px; transition: 0.3s; }
 .rating-orb.active { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 15px rgba(0,212,255,0.3); background: rgba(0,212,255,0.1); }
-
 /* CHRONO STYLE */
 .chrono-row { display: flex; align-items: center; gap: 20px; padding: 20px; margin-bottom: 15px; }
 .chrono-timeline { flex: 1; height: 8px; background: rgba(255,255,255,0.05); border-radius: 10px; position: relative; overflow: hidden; }
 .chrono-progress { height: 100%; background: linear-gradient(90deg, var(--accent), #00ffaa); box-shadow: 0 0 15px var(--accent); transition: 1s ease-out; }
 </style>
 `;
-
 const NAV_COMPONENT = `
 <button class="nav-burger" onclick="toggleNav()">☰</button>
 <div id="nav-trigger" onmouseover="toggleNav()"></div>
@@ -162,10 +146,11 @@ const NAV_COMPONENT = `
     <a href="/plan-to-watch" class="nav-link"><span class="nav-icon">🔖</span> PLAN TO WATCH</a>
     <a href="/hall-of-fame" class="nav-link"><span class="nav-icon">🏆</span> HALL OF FAME</a>
     <a href="/chrono-sync" class="nav-link"><span class="nav-icon">⏳</span> CHRONO-SYNC</a>
+    <a href="/intelligence-core" class="nav-link"><span class="nav-icon">🧠</span> INTELLIGENCE CORE</a>
 
     <div style="margin-top:auto; padding:20px; background:rgba(255,255,255,0.03); border-radius:15px; border:1px solid var(--border);">
         <div style="font-size:10px; color:var(--accent); letter-spacing:1px; margin-bottom:5px;">● SYSTEM ONLINE</div>
-        <div style="font-size:9px; color:#8b949e; opacity:0.6;">PHASE 4: CHRONO-SYNC DEPLOYED</div>
+        <div style="font-size:9px; color:#8b949e; opacity:0.6;">PHASE 5: INTELLIGENCE CORE ACTIVE</div>
     </div>
 </div>
 <script>
@@ -175,7 +160,6 @@ const NAV_COMPONENT = `
     }
 </script>
 `;
-
 const VOICE_SCRIPT = `
 <script>
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -197,17 +181,14 @@ const VOICE_SCRIPT = `
     }
 </script>
 `;
-
 app.get('/watchlist', async (req, res) => {
     const list = await getWatchlist();
     const activeSyncs = list.filter(s => s.status === 'watching');
-    
     const renderCard = (s) => {
         const total = s.totalEpisodes || 1;
         const progress = Math.min(100, Math.floor((s.currentEpisode / total) * 100));
         let posterUrl = s.poster;
         if (posterUrl && !posterUrl.startsWith('http')) posterUrl = `https://image.tmdb.org/t/p/w500${posterUrl}`;
-        
         return `
         <div class="glass" style="padding:10px; position:relative; overflow:hidden;">
             <a href="/show/${s.type}/${s.id}"><img src="${posterUrl}" style="width:100%; height:240px; object-fit:cover; border-radius:12px;"></a>
@@ -223,7 +204,6 @@ app.get('/watchlist', async (req, res) => {
             </div>
         </div>`;
     };
-
     res.send(`<html>
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -242,7 +222,6 @@ app.get('/watchlist', async (req, res) => {
                 </div>
                 <div id="results" class="glass" style="display:none; position:absolute; left:20px; right:20px; z-index:1001; max-height:400px; overflow-y:auto; margin-top:10px; padding:10px;"></div>
             </header>
-
             <h2 style="font-size:11px; letter-spacing:3px; opacity:0.4; margin:0 0 20px 10px; font-weight:800;">● ACTIVE_SYNC</h2>
             <div class="poster-grid">
                 ${activeSyncs.map(s => renderCard(s)).join('')}
@@ -279,12 +258,10 @@ app.get('/watchlist', async (req, res) => {
         </script>
     </body></html>`);
 });
-
 // --- NEW PAGE: CHRONO-SYNC ---
 app.get('/chrono-sync', async (req, res) => {
     const list = await getWatchlist();
     const active = list.filter(s => s.status === 'watching');
-    
     const renderChronoRow = (s) => {
         const start = s.startDate ? new Date(s.startDate) : new Date();
         const now = new Date();
@@ -292,7 +269,6 @@ app.get('/chrono-sync', async (req, res) => {
         // Logic: Calculate progress over a 90-day window, or show episode progress if longer
         const cycleProgress = Math.min(100, Math.floor((diffDays / 90) * 100));
         const epProgress = Math.min(100, Math.floor((s.currentEpisode / (s.totalEpisodes || 1)) * 100));
-        
         return `
         <div class="glass chrono-row">
             <div style="width:50px; height:70px; border-radius:8px; overflow:hidden; flex-shrink:0;">
@@ -313,7 +289,6 @@ app.get('/chrono-sync', async (req, res) => {
             </div>
         </div>`;
     };
-
     res.send(`<html>
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -331,12 +306,10 @@ app.get('/chrono-sync', async (req, res) => {
         </div>
     </body></html>`);
 });
-
 // --- NEW PAGE: PLAN TO WATCH ---
 app.get('/plan-to-watch', async (req, res) => {
     const list = await getWatchlist();
     const planned = list.filter(s => s.status === 'planned');
-    
     const renderPlannedCard = (s) => {
         let posterUrl = s.poster;
         if (posterUrl && !posterUrl.startsWith('http')) posterUrl = `https://image.tmdb.org/t/p/w500${posterUrl}`;
@@ -349,7 +322,6 @@ app.get('/plan-to-watch', async (req, res) => {
             </div>
         </div>`;
     };
-
     res.send(`<html>
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -373,12 +345,10 @@ app.get('/plan-to-watch', async (req, res) => {
         </script>
     </body></html>`);
 });
-
 // --- NEW PAGE: HALL OF FAME ---
 app.get('/hall-of-fame', async (req, res) => {
     const list = await getWatchlist();
     const completed = list.filter(s => s.status === 'completed');
-    
     const renderHallCard = (s) => {
         let posterUrl = s.poster;
         if (posterUrl && !posterUrl.startsWith('http')) posterUrl = `https://image.tmdb.org/t/p/w500${posterUrl}`;
@@ -392,7 +362,6 @@ app.get('/hall-of-fame', async (req, res) => {
             </div>
         </div>`;
     };
-
     res.send(`<html>
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -410,7 +379,6 @@ app.get('/hall-of-fame', async (req, res) => {
         </div>
     </body></html>`);
 });
-
 app.get('/show/:type/:id', async (req, res) => {
     const { type, id } = req.params;
     const watchlist = await getWatchlist();
@@ -425,11 +393,9 @@ app.get('/show/:type/:id', async (req, res) => {
             data = tmdbRes.data;
         }
     } catch(e) { return res.send("Uplink Error"); }
-
     const logs = local?.logs ? Object.fromEntries(local.logs) : {};
     let displayPoster = local?.poster || data.poster_path;
     if (displayPoster && !displayPoster.startsWith('http')) displayPoster = `https://image.tmdb.org/t/p/w500${displayPoster}`;
-
     res.send(`<html>
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -442,11 +408,9 @@ app.get('/show/:type/:id', async (req, res) => {
                 <img src="${displayPoster}" style="width:100%; border-radius:18px; margin-bottom:25px; box-shadow: 0 20px 40px rgba(0,0,0,0.6);">
                 <h1 style="font-size:22px; margin:0 0 12px 0; font-weight:800;">${local?.title || data.title}</h1>
                 <p style="font-size:14px; opacity:0.5; line-height:1.6; margin-bottom:30px;">${data.overview?.substring(0, 300)}...</p>
-                
                 <div style="display:flex; flex-wrap:wrap; justify-content:center; margin-bottom:30px; background:rgba(0,0,0,0.2); padding:15px; border-radius:15px;">
                     ${[1,2,3,4,5,6,7,8,9,10].map(n => `<button class="rating-orb ${local?.personalRating==n?'active':''}" onclick="setRating(${n})">${n}</button>`).join('')}
                 </div>
-                
                 <div style="display:flex; gap:12px;">
                     <button onclick="location.href='/watchlist'" class="btn" style="flex:1;">Vault</button>
                     <button onclick="purgeShow()" class="btn" style="border-color:var(--red); color:var(--red);">Purge</button>
@@ -463,7 +427,6 @@ app.get('/show/:type/:id', async (req, res) => {
                         <button class="btn" onclick="chat()">Send</button>
                     </div>
                 </div>
-
                 <div class="glass" style="padding:25px;">
                     <textarea id="logText" class="input-field" style="height:120px; margin-bottom:20px; resize:none;" placeholder="Log your observations..."></textarea>
                     <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -474,7 +437,6 @@ app.get('/show/:type/:id', async (req, res) => {
                         <button class="btn" onclick="saveLog()">Record Entry</button>
                     </div>
                 </div>
-
                 <div id="log-list" style="margin-top:30px;">
                     ${Object.keys(logs).sort((a,b)=>b-a).map(ep => `
                         <div class="glass" style="padding:20px; margin-bottom:15px; border-left:4px solid var(--accent);">
@@ -508,6 +470,70 @@ app.get('/show/:type/:id', async (req, res) => {
     </body></html>`);
 });
 
+// --- NEW PAGE: INTELLIGENCE CORE (STATS & AI) ---
+app.get('/intelligence-core', async (req, res) => {
+    const list = await getWatchlist();
+    const completed = list.filter(s => s.status === 'completed');
+    const watching = list.filter(s => s.status === 'watching');
+
+    // Stats Logic
+    const avgRating = completed.length > 0 
+        ? (completed.reduce((acc, s) => acc + (s.personalRating || 0), 0) / completed.length).toFixed(1) 
+        : "N/A";
+    
+    const totalEps = list.reduce((acc, s) => acc + (s.currentEpisode || 0), 0);
+
+    // AI Recommendation Engine
+    let aiRecs = "Initiating Analysis...";
+    try {
+        const tasteProfile = completed.map(s => `${s.title} (${s.personalRating}/10)`).join(", ");
+        const completion = await groq.chat.completions.create({
+            messages: [
+                { role: "system", content: "You are the VANTAGE Intelligence Core. User is a 'savorer' (no binging). Analyze their Hall of Fame and suggest 3 masterpieces (Anime or HBO style) that reward slow watching. Return brief, tactical descriptions." },
+                { role: "user", content: `My Hall of Fame: ${tasteProfile || "Empty. I like high-quality storytelling."}` }
+            ],
+            model: "llama-3.3-70b-versatile",
+        });
+        aiRecs = completion.choices[0].message.content.replace(/\n/g, '<br>');
+    } catch (e) { aiRecs = "AI Uplink Interrupted."; }
+
+    res.send(`<html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            ${HUD_STYLE}
+        </head>
+        <body>
+        ${NAV_COMPONENT}
+        <div style="padding:20px; max-width:1000px; margin:auto; padding-top:80px;">
+            <h1 style="font-size:24px; margin:0 0 10px 0; font-weight:900;">INTELLIGENCE <span class="accent-text">CORE</span></h1>
+            
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:20px; margin-bottom:40px;">
+                <div class="glass" style="padding:20px; text-align:center;">
+                    <div style="font-size:10px; opacity:0.5; letter-spacing:2px;">AVG_RATING</div>
+                    <div style="font-size:32px; font-weight:900; color:var(--gold);">${avgRating}</div>
+                </div>
+                <div class="glass" style="padding:20px; text-align:center;">
+                    <div style="font-size:10px; opacity:0.5; letter-spacing:2px;">EPS_CONSUMED</div>
+                    <div style="font-size:32px; font-weight:900; color:var(--accent);">${totalEps}</div>
+                </div>
+                <div class="glass" style="padding:20px; text-align:center;">
+                    <div style="font-size:10px; opacity:0.5; letter-spacing:2px;">ACTIVE_SYNC</div>
+                    <div style="font-size:32px; font-weight:900;">${watching.length}</div>
+                </div>
+            </div>
+
+            <div class="glass" style="padding:30px; border-left:4px solid var(--accent); position:relative; overflow:hidden;">
+                <div style="position:absolute; top:-10px; right:-10px; font-size:100px; opacity:0.03; font-weight:900;">AI</div>
+                <h2 style="font-size:14px; letter-spacing:3px; margin-bottom:20px; color:var(--accent);">● TACTICAL_RECOMMENDATIONS</h2>
+                <div style="font-size:15px; line-height:1.8; opacity:0.9;">
+                    ${aiRecs}
+                </div>
+            </div>
+        </div>
+    </body></html>`);
+});
+
+
 // --- API ROUTES (STABILIZED) ---
 app.get('/api/search', async (req, res) => {
     try {
@@ -524,7 +550,6 @@ app.get('/api/search', async (req, res) => {
         res.json({ mal: malResults, tmdb: tmdbResults });
     } catch (e) { res.json({ mal: [], tmdb: [] }); }
 });
-
 app.get('/save', async (req, res) => {
     const { id, title, poster, type, source, total, status } = req.query;
     await saveWatchlist({ 
@@ -535,7 +560,6 @@ app.get('/save', async (req, res) => {
     });
     res.redirect(status === 'planned' ? '/plan-to-watch' : '/watchlist');
 });
-
 app.get('/api/update/:id', async (req, res) => {
     const show = await Show.findOne({ id: req.params.id });
     if (show) {
@@ -551,12 +575,10 @@ app.get('/api/update/:id', async (req, res) => {
         res.json({ success: true });
     } else { res.json({ success: false }); }
 });
-
 app.get('/api/update-status/:id', async (req, res) => {
     await Show.findOneAndUpdate({ id: req.params.id }, { status: req.query.status });
     res.json({ success: true });
 });
-
 app.post('/api/journal/:id', async (req, res) => {
     const show = await Show.findOne({ id: req.params.id });
     if (show) {
@@ -568,11 +590,9 @@ app.post('/api/journal/:id', async (req, res) => {
     }
     res.json({ success: true });
 });
-
 app.get('/api/delete-show/:id', async (req, res) => {
     await Show.deleteOne({ id: req.params.id });
     res.redirect('/watchlist');
 });
-
 app.get('/', (req, res) => res.redirect('/watchlist'));
 app.listen(PORT, () => console.log(`🚀 VANTAGE ONLINE | PORT ${PORT}`));
