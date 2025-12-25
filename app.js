@@ -259,36 +259,42 @@ app.get('/watchlist', async (req, res) => {
     </body></html>`);
 });
 
-// --- THE UNIVERSAL RADAR v9.0 (DETAILS + TIMELINE + VISIBILITY) ---
+// --- THE UNIVERSAL RADAR v10.0 (SURGERY COMPLETE) ---
 app.get('/chrono-sync', async (req, res) => {
     try {
         const list = await getWatchlist();
-        // FORCE inclusion of Plan to Watch & Hall of Fame
-        const targetStatuses = ['watching', 'plan-to-watch', 'hall-of-fame'];
+        
+        // SYNCED STATUSES: Matches your 'planned' and 'completed' tags exactly
+        const targetStatuses = ['watching', 'planned', 'completed'];
         const vaultItems = list.filter(s => targetStatuses.includes(s.status));
         
-        const now = new Date();
         let schedules = [];
 
         for (const show of vaultItems) {
             let intel = {
                 id: show.id,
                 title: show.title || "Unknown Asset",
-                poster: show.poster || show.image || "",
-                subLabel: "Vault Record",
-                badge: show.status.toUpperCase(),
+                poster: show.poster || "",
+                subLabel: show.status === 'planned' ? "On Radar" : "Syncing...",
+                badge: show.status === 'completed' ? "LEGEND" : show.status.toUpperCase(),
                 sortWeight: 100,
-                type: show.type,
-                timeframe: "" // For the Oct 12 - Dec 28 range
+                timeframe: "" 
             };
 
+            // Fix Poster URLs for TMDB items
+            if (intel.poster && !intel.poster.startsWith('http')) {
+                intel.poster = `https://image.tmdb.org/t/p/w500${intel.poster}`;
+            }
+
             try {
-                if (show.type === 'anime') {
-                    const response = await fetch(`https://api.jikan.moe/v4/anime/${show.malId || show.id}/full`);
+                if (show.source === 'mal' || show.type === 'anime') {
+                    const cleanId = show.id.toString().split('_')[0];
+                    const response = await fetch(`https://api.jikan.moe/v4/anime/${cleanId}`);
                     const { data: anime } = await response.json();
+                    
                     if (anime) {
                         intel.title = anime.title_english || anime.title;
-                        // SPECIAL CASE: ONE PUNCH MAN 3 SCHEDULE
+                        // Hard-coded Intelligence for One Punch Man 3
                         if (intel.title.includes("One Punch Man") && intel.title.includes("3")) {
                             intel.timeframe = "OCT 12, 2025 — DEC 28, 2025";
                             intel.subLabel = "Sundays @ TV Tokyo";
@@ -296,27 +302,34 @@ app.get('/chrono-sync', async (req, res) => {
                             intel.sortWeight = 1;
                         } else if (anime.status === "Currently Airing") {
                             intel.badge = "AIRING";
-                            intel.subLabel = anime.broadcast?.string || "Weekly Uplink";
+                            intel.subLabel = anime.broadcast?.string || "Weekly";
                             intel.sortWeight = 2;
                         }
                     }
                 } else {
-                    // TMDB WESTERN (Chernobyl / Lupin)
-                    const tmdbUrl = `https://api.themoviedb.org/3/tv/${show.tmdbId || show.id}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`;
+                    // TMDB (Lupin, Chernobyl, etc.)
+                    const cleanId = show.id.toString().split('_')[0];
+                    const tmdbUrl = `https://api.themoviedb.org/3/tv/${cleanId}?api_key=${process.env.TMDB_API_KEY}&append_to_response=next_episode_to_air`;
                     const data = await fetch(tmdbUrl).then(r => r.json());
+                    
                     if (data.name) {
                         intel.title = data.name;
                         if (data.next_episode_to_air) {
-                            intel.badge = "ACTIVE";
+                            intel.badge = "LIVE";
                             intel.subLabel = `Next: S${data.next_episode_to_air.season_number}E${data.next_episode_to_air.episode_number}`;
                             intel.sortWeight = 0;
-                        } else if (data.status === "Returning Series") {
-                            intel.subLabel = "More Episodes Confirmed";
-                            intel.badge = "LEGACY";
+                        } else if (data.status === "Returning Series" || data.in_production) {
+                            intel.subLabel = "Production Active";
+                            intel.badge = "NEXT";
+                            intel.sortWeight = 10;
                         }
                     }
                 }
-            } catch (e) { /* Fallback to vault data */ }
+            } catch (e) { console.log("Radar skip:", intel.title); }
+
+            // Adjust weight for the Hall of Fame (Completed) items so they sit at the bottom
+            if (show.status === 'completed') intel.sortWeight = 200;
+
             schedules.push(intel);
         }
 
@@ -327,19 +340,22 @@ app.get('/chrono-sync', async (req, res) => {
             <body style="background:#050505; color:white;">
                 ${NAV_COMPONENT}
                 <div style="padding:100px 40px; max-width:1200px; margin:auto;">
-                    <h1 style="font-weight:900;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
-                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:30px; margin-top:40px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:40px;">
+                        <h1 style="font-weight:900; margin:0;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
+                        <div style="font-size:10px; font-family:monospace; opacity:0.4;">UPLINK_STABLE // DATA_NODES: ${sorted.length}</div>
+                    </div>
+                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap:30px;">
                         ${sorted.map(s => `
-                            <a href="/details/${s.id}" style="text-decoration:none; color:inherit;">
-                                <div class="glass" style="border-radius:12px; overflow:hidden; transition:0.3s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='transparent'">
+                            <a href="/show/${s.type || 'tv'}/${s.id}" style="text-decoration:none; color:inherit;">
+                                <div class="glass" style="border-radius:15px; overflow:hidden; border:1px solid rgba(255,255,255,0.05); transition:0.3s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.05)'">
                                     <div style="position:relative; aspect-ratio:2/3;">
                                         <img src="${s.poster}" style="width:100%; height:100%; object-fit:cover;">
-                                        <div style="position:absolute; top:12px; right:12px; background:var(--accent); color:black; font-weight:900; padding:4px 10px; font-size:11px; border-radius:4px;">${s.badge}</div>
+                                        <div style="position:absolute; top:12px; right:12px; background:var(--accent); color:black; font-weight:900; padding:4px 10px; font-size:10px; border-radius:4px; box-shadow:0 4px 10px rgba(0,0,0,0.5);">${s.badge}</div>
                                     </div>
-                                    <div style="padding:15px;">
-                                        <div style="font-weight:bold; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${s.title}</div>
-                                        <div style="color:var(--accent); font-family:monospace; font-size:10px; margin-top:5px;">${s.subLabel}</div>
-                                        ${s.timeframe ? `<div style="font-size:9px; opacity:0.5; margin-top:8px; border-top:1px solid #222; padding-top:8px;">${s.timeframe}</div>` : ''}
+                                    <div style="padding:15px; background:rgba(255,255,255,0.02);">
+                                        <div style="font-weight:bold; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:14px;">${s.title}</div>
+                                        <div style="color:var(--accent); font-family:monospace; font-size:10px; margin-top:5px; font-weight:bold;">${s.subLabel}</div>
+                                        ${s.timeframe ? `<div style="font-size:9px; opacity:0.4; margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.1); font-family:monospace;">${s.timeframe}</div>` : ''}
                                     </div>
                                 </div>
                             </a>
@@ -347,9 +363,8 @@ app.get('/chrono-sync', async (req, res) => {
                     </div>
                 </div>
             </body></html>`);
-    } catch (err) { res.status(500).send("Surgery Failed"); }
+    } catch (err) { res.status(500).send("Critical System Error"); }
 });
-
 
 // --- NEW PAGE: PLAN TO WATCH ---
 app.get('/plan-to-watch', async (req, res) => {
