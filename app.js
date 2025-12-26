@@ -307,7 +307,7 @@ app.get('/anime-detail/:id', async (req, res) => {
     </body>
     </html>
     `);
-});
+});s
 
 
 // --- MONGODB CONNECTION ---
@@ -805,58 +805,19 @@ app.get('/api/search', async (req, res) => {
         res.json({ mal: malResults, tmdb: tmdbResults });
     } catch (e) { res.json({ mal: [], tmdb: [] }); }
 });
+
+// FIXED: /save route with Safety Suffix Implementation
 app.get('/save', async (req, res) => {
     const { id, title, poster, type, source, total, status } = req.query;
-    await saveWatchlist({ 
-        id, title: decodeURIComponent(title), poster: decodeURIComponent(poster), 
-        type, source, currentEpisode: 0, totalEpisodes: parseInt(total) || 12, 
-        status: status || 'watching',
-        logs: {}, personalRating: 0, startDate: new Date().toISOString() 
-    });
-    res.redirect(status === 'planned' ? '/plan-to-watch' : '/watchlist');
-});
-app.get('/api/update/:id', async (req, res) => {
-    const show = await Show.findOne({ id: req.params.id });
-    if (show) {
-        if (req.query.action === 'plus') {
-            show.currentEpisode++;
-            // AUTO-ARCHIVE LOGIC: Move to Hall of Fame if finished
-            if (show.currentEpisode >= show.totalEpisodes) {
-                show.status = 'completed';
-            }
-        }
-        if (req.query.rating) show.personalRating = parseInt(req.query.rating);
-        await show.save();
-        res.json({ success: true });
-    } else { res.json({ success: false }); }
-});
-app.get('/api/update-status/:id', async (req, res) => {
-    await Show.findOneAndUpdate({ id: req.params.id }, { status: req.query.status });
-    res.json({ success: true });
-});
-app.post('/api/journal/:id', async (req, res) => {
-    const show = await Show.findOne({ id: req.params.id });
-    if (show) {
-        if (!show.logs) show.logs = new Map();
-        show.logs.set(req.body.ep.toString(), { text: req.body.text, date: new Date().toLocaleDateString() });
-        // Handle episode jumps from journal
-        if (parseInt(req.body.ep) >= show.totalEpisodes) show.status = 'completed';
-        await show.save();
-    }
-    res.json({ success: true });
-});
-app.get('/api/delete-show/:id', async (req, res) => {
-    await Show.deleteOne({ id: req.params.id });
-    res.redirect('/watchlist');
-});
-app.get('/', (req, res) => res.redirect('/watchlist'));
-app.get('/save', async (req, res) => {
-    const { id, title, poster, type, source, total, status } = req.query;
+    
+    // 1. Create the Safety Suffix (e.g., "123" becomes "123_mal" or "123_tmdb")
+    const finalId = `${id}_${source}`;
+
     try {
         await Show.findOneAndUpdate(
-            { id: id }, 
+            { id: finalId }, // Search by the unique suffixed ID
             { 
-                id, 
+                id: finalId, // Save the unique suffixed ID
                 title: decodeURIComponent(title), 
                 poster: decodeURIComponent(poster), 
                 type, 
@@ -868,10 +829,51 @@ app.get('/save', async (req, res) => {
             }, 
             { upsert: true }
         );
-        res.json({ success: true });
+        
+        // 2. Tactical Redirect based on entry status
+        res.redirect(status === 'planned' ? '/plan-to-watch' : '/watchlist');
     } catch (e) {
-        res.status(500).json({ success: false });
+        console.error("Vault Write Error:", e);
+        res.status(500).send("Vault Write Error: Could not sync to database.");
     }
 });
-app.listen(PORT, () => console.log(`🚀 VANTAGE ONLINE | PORT ${PORT}`));
+
+app.get('/api/update/:id', async (req, res) => {
+    const show = await Show.findOne({ id: req.params.id });
+    if (show) {
+        if (req.query.action === 'plus') {
+            show.currentEpisode++;
+            if (show.currentEpisode >= show.totalEpisodes) {
+                show.status = 'completed';
+            }
+        }
+        if (req.query.rating) show.personalRating = parseInt(req.query.rating);
+        await show.save();
+        res.json({ success: true });
+    } else { res.json({ success: false }); }
+});
+
+app.get('/api/update-status/:id', async (req, res) => {
+    await Show.findOneAndUpdate({ id: req.params.id }, { status: req.query.status });
+    res.json({ success: true });
+});
+
+app.post('/api/journal/:id', async (req, res) => {
+    const show = await Show.findOne({ id: req.params.id });
+    if (show) {
+        if (!show.logs) show.logs = new Map();
+        show.logs.set(req.body.ep.toString(), { text: req.body.text, date: new Date().toLocaleDateString() });
+        if (parseInt(req.body.ep) >= show.totalEpisodes) show.status = 'completed';
+        await show.save();
+    }
+    res.json({ success: true });
+});
+
+app.get('/api/delete-show/:id', async (req, res) => {
+    await Show.deleteOne({ id: req.params.id });
+    res.redirect('/watchlist');
+});
+
+app.get('/', (req, res) => res.redirect('/watchlist'));
+
 app.listen(PORT, () => console.log(`VANTAGE OS ONLINE ON PORT ${PORT}`));
