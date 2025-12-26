@@ -321,7 +321,7 @@ const NAV_COMPONENT = `
     <a href="/watchlist" class="nav-link"><span class="nav-icon">⦿</span> ACTIVE SYNC</a>
     <a href="/plan-to-watch" class="nav-link"><span class="nav-icon">🔖</span> PLAN TO WATCH</a>
     <a href="/hall-of-fame" class="nav-link"><span class="nav-icon">🏆</span> HALL OF FAME</a>
-    <a href="/chrono-sync" class="nav-link"><span class="nav-icon">⏳</span> CHRONO-SYNC</a>
+<a href="/vantage" class="nav-link"><span class="nav-icon">⏳</span> VANTAGE OS</a>
     <a href="/intelligence-core" class="nav-link"><span class="nav-icon">🧠</span> INTELLIGENCE CORE</a>
 
     <div style="margin-top:auto; padding:20px; background:rgba(255,255,255,0.03); border-radius:15px; border:1px solid var(--border);">
