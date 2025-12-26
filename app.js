@@ -134,18 +134,51 @@ app.get('/vantage', async (req, res) => {
 
 app.get('/anime-detail/:id', async (req, res) => {
     const malId = req.params.id;
-    const cacheKey = `v_detail_${malId}`;
+    const cacheKey = `v_full_intel_${malId}`;
     let data = myCache.get(cacheKey);
 
     if (!data) {
-        // Using the jikanjs wrapper for detail fetching
-        const [main, chars] = await Promise.all([
+        // TAP INTO FULL WRAPPER POWER: Loading 3 streams of data simultaneously
+        const [main, chars, recs] = await Promise.all([
             jikanjs.loadAnime(malId, 'full'),
-            jikanjs.loadAnime(malId, 'characters')
+            jikanjs.loadAnime(malId, 'characters'),
+            jikanjs.loadAnime(malId, 'recommendations')
         ]);
-        data = { ...main.data, characters: chars.data.slice(0, 6) };
+        
+        data = { 
+            ...main.data, 
+            characters: chars.data.slice(0, 6),
+            recommendations: recs.data.slice(0, 5) // Added Recommendation Intelligence
+        };
         myCache.set(cacheKey, data);
     }
+
+    res.send(`
+    <style>
+        /* ... keeping your existing styles ... */
+        .rec-tag { background: rgba(0,212,255,0.1); color: var(--accent); padding: 5px 10px; border-radius: 5px; font-size: 11px; margin: 5px; display: inline-block; border: 1px solid var(--accent); }
+    </style>
+    <div class="right-panel">
+        <div style="margin-bottom: 20px;">
+            <span class="rec-tag">${data.source}</span>
+            <span class="rec-tag">${data.studios.map(s => s.name).join(', ')}</span>
+            <span class="rec-tag">RANK: #${data.rank}</span>
+        </div>
+
+        <p style="opacity:0.8; line-height:1.8;">${data.synopsis}</p>
+
+        <h3 style="margin-top:30px; font-size:12px; letter-spacing:2px; color:var(--accent);">SIMILAR INTELLIGENCE</h3>
+        <div style="display:flex; flex-wrap:wrap;">
+            ${data.recommendations.map(r => `
+                <div onclick="location.href='/anime-detail/${r.entry.mal_id}'" style="cursor:pointer; margin-right:10px; text-align:center; width:80px;">
+                    <img src="${r.entry.images.jpg.image_url}" style="width:100%; border-radius:5px;">
+                    <p style="font-size:9px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;">${r.entry.title}</p>
+                </div>
+            `).join('')}
+        </div>
+    </div>
+    `);
+});
 
     res.send(`
     <style>
@@ -186,7 +219,7 @@ app.get('/anime-detail/:id', async (req, res) => {
         </div>
     </div>
     `);
-});
+
 
 // --- MONGODB CONNECTION ---
 mongoose.connect(process.env.MONGO_URI)
