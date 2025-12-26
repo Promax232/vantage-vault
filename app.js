@@ -138,87 +138,88 @@ app.get('/anime-detail/:id', async (req, res) => {
     let data = myCache.get(cacheKey);
 
     if (!data) {
-        // TAP INTO FULL WRAPPER POWER: Loading 3 streams of data simultaneously
-        const [main, chars, recs] = await Promise.all([
-            jikanjs.loadAnime(malId, 'full'),
-            jikanjs.loadAnime(malId, 'characters'),
-            jikanjs.loadAnime(malId, 'recommendations')
-        ]);
-        
-        data = { 
-            ...main.data, 
-            characters: chars.data.slice(0, 6),
-            recommendations: recs.data.slice(0, 5) // Added Recommendation Intelligence
-        };
-        myCache.set(cacheKey, data);
+        try {
+            const [main, chars, recs] = await Promise.all([
+                jikanjs.loadAnime(malId, 'full'),
+                jikanjs.loadAnime(malId, 'characters'),
+                jikanjs.loadAnime(malId, 'recommendations')
+            ]);
+            
+            data = { 
+                ...main.data, 
+                characters: chars.data.slice(0, 6),
+                recommendations: recs.data.slice(0, 5)
+            };
+            myCache.set(cacheKey, data);
+        } catch (error) {
+            return res.status(404).send("Intelligence Core: Subject Not Found");
+        }
     }
 
     res.send(`
-    <style>
-        /* ... keeping your existing styles ... */
-        .rec-tag { background: rgba(0,212,255,0.1); color: var(--accent); padding: 5px 10px; border-radius: 5px; font-size: 11px; margin: 5px; display: inline-block; border: 1px solid var(--accent); }
-    </style>
-    <div class="right-panel">
-        <div style="margin-bottom: 20px;">
-            <span class="rec-tag">${data.source}</span>
-            <span class="rec-tag">${data.studios.map(s => s.name).join(', ')}</span>
-            <span class="rec-tag">RANK: #${data.rank}</span>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <style>
+            body { background: #000; color: white; font-family: 'Inter', sans-serif; margin:0; }
+            .hero { height: 45vh; width:100%; position:relative; display:flex; align-items:flex-end; padding: 40px; box-sizing:border-box; }
+            .hero-bg { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; filter:blur(40px) brightness(0.2); z-index:-1; }
+            .content { max-width: 1100px; margin: -120px auto 50px; padding: 0 20px; display: flex; gap: 40px; }
+            .poster { width: 300px; border-radius: 20px; box-shadow: 0 30px 60px rgba(0,0,0,1); border: 1px solid rgba(255,255,255,0.1); }
+            .right-panel { flex: 1; margin-top: 140px; }
+            .t-btn { background: #ff0000; color: white; padding: 14px 28px; border-radius: 50px; text-decoration: none; font-weight: 900; display: inline-flex; align-items: center; gap: 10px; margin-top: 20px; box-shadow: 0 0 20px rgba(255,0,0,0.3); }
+            .char-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 15px; margin-top: 30px; }
+            .char-card { text-align: center; }
+            .char-card img { width: 100%; aspect-ratio: 1/1; object-fit: cover; border-radius: 50%; border: 2px solid #222; }
+            .char-card p { font-size: 10px; margin-top: 8px; opacity: 0.6; }
+            .rec-tag { background: rgba(0,212,255,0.1); color: #00d4ff; padding: 5px 10px; border-radius: 5px; font-size: 11px; margin: 5px; display: inline-block; border: 1px solid #00d4ff; }
+            @media (max-width: 800px) { .content { flex-direction: column; align-items: center; text-align: center; } .right-panel { margin-top: 20px; } }
+        </style>
+    </head>
+    <body>
+        <div class="hero">
+            <img src="${data.images.jpg.large_image_url}" class="hero-bg">
+            <h1 style="font-size: clamp(24px, 5vw, 48px); margin:0; text-shadow: 0 10px 30px rgba(0,0,0,1);">${data.title}</h1>
         </div>
 
-        <p style="opacity:0.8; line-height:1.8;">${data.synopsis}</p>
-
-        <h3 style="margin-top:30px; font-size:12px; letter-spacing:2px; color:var(--accent);">SIMILAR INTELLIGENCE</h3>
-        <div style="display:flex; flex-wrap:wrap;">
-            ${data.recommendations.map(r => `
-                <div onclick="location.href='/anime-detail/${r.entry.mal_id}'" style="cursor:pointer; margin-right:10px; text-align:center; width:80px;">
-                    <img src="${r.entry.images.jpg.image_url}" style="width:100%; border-radius:5px;">
-                    <p style="font-size:9px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;">${r.entry.title}</p>
+        <div class="content">
+            <img src="${data.images.jpg.large_image_url}" class="poster">
+            <div class="right-panel">
+                <div style="margin-bottom: 20px;">
+                    <span class="rec-tag">${data.source || 'N/A'}</span>
+                    <span class="rec-tag">${data.studios?.map(s => s.name).join(', ') || 'Independent'}</span>
+                    <span class="rec-tag">RANK: #${data.rank || 'Unranked'}</span>
                 </div>
-            `).join('')}
+
+                <p style="opacity:0.8; line-height:1.8; font-size: 15px;">${data.synopsis}</p>
+                ${data.trailer?.url ? `<a href="${data.trailer.url}" target="_blank" class="t-btn">WATCH TRAILER</a>` : ''}
+                
+                <h3 style="margin-top:50px; font-size:12px; letter-spacing:3px; opacity:0.4;">CAST_DIRECTIVE</h3>
+                <div class="char-grid">
+                    ${data.characters.map(c => `
+                        <div class="char-card">
+                            <img src="${c.character.images.jpg.image_url}">
+                            <p>${c.character.name.split(',')[0]}</p>
+                        </div>
+                    `).join('')}
+                </div>
+
+                <h3 style="margin-top:30px; font-size:12px; letter-spacing:2px; color:#00d4ff;">SIMILAR INTELLIGENCE</h3>
+                <div style="display:flex; flex-wrap:wrap;">
+                    ${data.recommendations.map(r => `
+                        <div onclick="location.href='/anime-detail/${r.entry.mal_id}'" style="cursor:pointer; margin-right:10px; text-align:center; width:80px;">
+                            <img src="${r.entry.images.jpg.image_url}" style="width:100%; border-radius:5px;">
+                            <p style="font-size:9px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;">${r.entry.title}</p>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
         </div>
-    </div>
+    </body>
+    </html>
     `);
 });
 
-    res.send(`
-    <style>
-        body { background: #000; color: white; font-family: 'Inter', sans-serif; margin:0; }
-        .hero { height: 45vh; width:100%; position:relative; display:flex; align-items:flex-end; padding: 40px; box-sizing:border-box; }
-        .hero-bg { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; filter:blur(40px) brightness(0.2); z-index:-1; }
-        .content { max-width: 1100px; margin: -120px auto 50px; padding: 0 20px; display: flex; gap: 40px; }
-        .poster { width: 300px; border-radius: 20px; box-shadow: 0 30px 60px rgba(0,0,0,1); border: 1px solid rgba(255,255,255,0.1); }
-        .right-panel { flex: 1; margin-top: 140px; }
-        .t-btn { background: #ff0000; color: white; padding: 14px 28px; border-radius: 50px; text-decoration: none; font-weight: 900; display: inline-flex; align-items: center; gap: 10px; margin-top: 20px; box-shadow: 0 0 20px rgba(255,0,0,0.3); }
-        .char-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 15px; margin-top: 30px; }
-        .char-card { text-align: center; }
-        .char-card img { width: 100%; aspect-ratio: 1/1; object-fit: cover; border-radius: 50%; border: 2px solid #222; }
-        .char-card p { font-size: 10px; margin-top: 8px; opacity: 0.6; }
-        @media (max-width: 800px) { .content { flex-direction: column; align-items: center; text-align: center; } .right-panel { margin-top: 20px; } }
-    </style>
-
-    <div class="hero">
-        <img src="${data.images.jpg.large_image_url}" class="hero-bg">
-        <h1 style="font-size: clamp(24px, 5vw, 48px); margin:0; text-shadow: 0 10px 30px rgba(0,0,0,1);">${data.title}</h1>
-    </div>
-
-    <div class="content">
-        <img src="${data.images.jpg.large_image_url}" class="poster">
-        <div class="right-panel">
-            <p style="opacity:0.8; line-height:1.8; font-size: 15px;">${data.synopsis}</p>
-            ${data.trailer.url ? `<a href="${data.trailer.url}" target="_blank" class="t-btn">WATCH TRAILER</a>` : ''}
-            
-            <h3 style="margin-top:50px; font-size:12px; letter-spacing:3px; opacity:0.4;">CAST_DIRECTIVE</h3>
-            <div class="char-grid">
-                ${data.characters.map(c => `
-                    <div class="char-card">
-                        <img src="${c.character.images.jpg.image_url}">
-                        <p>${c.character.name.split(',')[0]}</p>
-                    </div>
-                `).join('')}
-            </div>
-        </div>
-    </div>
-    `);
 
 
 // --- MONGODB CONNECTION ---
@@ -785,3 +786,4 @@ app.get('/save', async (req, res) => {
     }
 });
 app.listen(PORT, () => console.log(`🚀 VANTAGE ONLINE | PORT ${PORT}`));
+app.listen(PORT, () => console.log(`VANTAGE OS ONLINE ON PORT ${PORT}`));
