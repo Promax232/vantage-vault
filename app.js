@@ -10,6 +10,7 @@ const API_KEY = process.env.TMDB_KEY;
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
 const BRAVE_KEY = process.env.BRAVE_API_KEY; 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const SIMKL_CLIENT_ID = process.env.SIMKL_CLIENT_ID;
 app.use(express.json());
 // --- MONGODB CONNECTION ---
 mongoose.connect(process.env.MONGO_URI)
@@ -259,154 +260,272 @@ app.get('/watchlist', async (req, res) => {
     </body></html>`);
 });
 
-// --- THE REFINED SIMKL ENGINE ---
+// --- THE ULTRA CHRONO-SYNC ENGINE (v21.0) ---
+
 app.get('/chrono-sync', async (req, res) => {
     try {
+        // 1. Retrieve the Watchlist
         const list = await getWatchlist();
-        // Separate Active from Hall of Fame to prioritize sync speed
-        const activeItems = list.filter(s => ['watching', 'planned'].includes(s.status));
         
+        // 2. Filter: Active Radar Only (Watching/Planned)
+        // We filter out 'completed' to keep the "Agent" fast and focused on what matters.
+        const activeItems = list.filter(s => ['watching', 'planned'].includes(s.status));
+
+        // 3. The Simkl Agent Loop
         const schedules = await Promise.all(activeItems.map(async (show) => {
+            // Default "Safe" State (in case API fails)
             let intel = {
                 id: show.id,
                 title: show.title || "Unknown Asset",
                 poster: show.poster || "",
-                subLabel: "CHRONO_OFFLINE",
-                badge: show.status === 'watching' ? "SAVORING" : "UPCOMING",
+                subLabel: "SYNCING...",
+                badge: show.status === 'watching' ? "SAVORING" : "PLANNED",
                 type: show.type || 'tv'
             };
 
+            // Fix TMDB poster paths to High-Res for Mobile
+            if (intel.poster && !intel.poster.startsWith('http')) {
+                intel.poster = `https://image.tmdb.org/t/p/w780${intel.poster}`;
+            }
+
             try {
-                // THE TRANSLATOR: Determine if we use MAL ID or TMDB ID
-                let simklUrl = "";
+                // --- THE JARVIS TRANSLATOR ---
+                // We strictly identify if this is Anime (MAL ID) or Western (TMDB ID)
+                // to stop "Ghost Titles" (e.g. Frieren showing as a random movie).
+                
+                let simklEndpoint = "";
                 const cleanId = show.id.toString().split('_')[0];
                 
-                if (show.type === 'anime' || (show.id.toString().length < 7 && !isNaN(cleanId))) {
-                    // Search by MAL ID specifically to avoid "Ghost Titles"
-                    simklUrl = `https://api.simkl.com/anime/${cleanId}?client_id=${process.env.SIMKL_CLIENT_ID}&extended=full`;
+                // If it's explicitly Anime OR from MAL source
+                if (show.type === 'anime' || show.source === 'mal') {
+                    simklEndpoint = `https://api.simkl.com/anime/mal/${cleanId}`;
                 } else {
-                    // Search by TMDB/TVDB for Western Media (Lupin, Chernobyl)
-                    simklUrl = `https://api.simkl.com/tv/${cleanId}?client_id=${process.env.SIMKL_CLIENT_ID}&extended=full`;
+                    // Default to TMDB for Western shows (Chernobyl, Lupin)
+                    simklEndpoint = `https://api.simkl.com/tv/tmdb/${cleanId}`;
                 }
 
-                const response = await fetch(simklUrl);
-                const data = await response.json();
+                // The Agent Call (Using Axios for stability)
+                const response = await axios.get(simklEndpoint, {
+                    params: { 
+                        extended: 'full', // Get full season details
+                        client_id: SIMKL_CLIENT_ID // Auth Header
+                    },
+                    timeout: 4000 // 4s timeout prevents infinite hanging
+                });
 
-                if (data && data.title && !data.error) {
-                    intel.title = data.title;
+                const data = response.data;
+                
+                if (data && !data.error) {
+                    intel.title = data.title; // Simkl's official title
+                    
+                    // SMART STATUS LOGIC
                     if (data.status === "airing") {
                         intel.badge = "LIVE";
-                        intel.subLabel = data.next_episode ? `Next: ${data.next_episode.date}` : "Airing Weekly";
-                    } else if (data.status === "preating" || data.status === "returning series") {
+                        // Check if there is a 'next_episode' object
+                        if (data.next_episode) {
+                           intel.subLabel = `Next: ${data.next_episode.date || 'Soon'}`;
+                        } else {
+                           intel.subLabel = "Airing Weekly";
+                        }
+                    } else if (data.status === "returning series") {
+                        intel.badge = "HIATUS";
+                        intel.subLabel = "Season Finished (Returning)";
+                    } else if (data.status === "ended") {
+                        intel.badge = "FINISHED";
+                        intel.subLabel = `${data.total_episodes || '?'} Episodes • Complete`;
+                    } else if (data.status === "in production") {
                         intel.badge = "UPCOMING";
-                        intel.subLabel = "Sequel on Radar";
-                    } else {
-                        intel.subLabel = "Full Season Available";
+                        intel.subLabel = "In Production";
                     }
                 }
-            } catch (err) { console.log("Sync Delay..."); }
+
+            } catch (err) {
+                // Silent Fail: Keep the card, just mark as Offline
+                console.log(`[Jarvis] Uplink failed for ${show.title}: ${err.message}`);
+                intel.subLabel = "OFFLINE_ARCHIVE";
+            }
+
             return intel;
         }));
 
-        res.send(`<html>
+        // 4. Sort: LIVE shows first, then SAVORING, then PLANNED
+        const sorted = schedules.sort((a, b) => {
+            const weights = { 'LIVE': 1, 'SAVORING': 2, 'HIATUS': 3, 'UPCOMING': 4, 'FINISHED': 5, 'VAULT': 6 };
+            return (weights[a.badge] || 10) - (weights[b.badge] || 10);
+        });
+
+        // 5. The "Ultra" Vertical UI
+        res.send(`
+        <!DOCTYPE html>
+        <html>
             <head>
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <style>
-                    :root { --accent: #00d4ff; --bg: #050505; }
-                    body { background: var(--bg); color: white; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; }
+                ${HUD_STYLE || ''} <style>
+                    :root { --accent: #00d4ff; --bg: #050505; --card-bg: #121212; }
+                    body { background: var(--bg); color: white; font-family: 'Inter', system-ui, sans-serif; margin: 0; padding: 0; }
                     
-                    /* THE FEED - Vertical Stack */
-                    .feed { display: flex; flex-direction: column; gap: 40px; max-width: 700px; margin: 80px auto; }
-
-                    .card {
-                        position: relative;
-                        width: 100%;
-                        border-radius: 20px;
-                        background: #111;
-                        overflow: hidden;
-                        border: 1px solid rgba(255,255,255,0.1);
+                    /* THE VERTICAL FEED CONTAINER */
+                    .feed-container { 
+                        display: flex; 
+                        flex-direction: column; 
+                        gap: 30px; 
+                        padding: 100px 20px 40px 20px; /* Top padding for Nav */
+                        max-width: 600px; 
+                        margin: 0 auto; 
                     }
 
-                    /* FIX: No more cropping */
-                    .poster-box {
+                    .header-section { margin-bottom: 20px; padding-left: 10px; }
+                    .header-title { font-size: 32px; font-weight: 800; letter-spacing: -1.5px; margin: 0; }
+                    .header-sub { font-family: monospace; opacity: 0.5; font-size: 11px; color: var(--accent); }
+
+                    /* THE CINEMATIC CARD */
+                    .ultra-card {
                         position: relative;
                         width: 100%;
-                        height: 450px; /* Consistent height for a social feed feel */
+                        background: var(--card-bg);
+                        border-radius: 24px;
+                        overflow: hidden;
+                        border: 1px solid rgba(255,255,255,0.08);
+                        box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+                        transition: transform 0.2s ease;
+                    }
+
+                    .ultra-card:active { transform: scale(0.98); }
+
+                    /* NO CROP LOGIC: Blurred BG + Contained Poster */
+                    .poster-frame {
+                        position: relative;
+                        width: 100%;
+                        height: 480px; /* Fixed height for consistent vertical feed */
+                        overflow: hidden;
                         background: black;
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                        overflow: hidden;
                     }
-
-                    /* The "Blurred Background" effect for vertical posters in wide boxes */
-                    .poster-bg {
+                    
+                    /* 1. The Blurry Background (Fills the box) */
+                    .poster-blur {
                         position: absolute;
-                        width: 110%; height: 110%;
-                        filter: blur(30px) brightness(0.3);
+                        top: 0; left: 0; width: 100%; height: 100%;
                         object-fit: cover;
+                        filter: blur(25px) brightness(0.4);
+                        transform: scale(1.1); /* Remove white edges from blur */
                         z-index: 1;
                     }
 
-                    .main-poster {
+                    /* 2. The Main Poster (No Cropping) */
+                    .poster-main {
                         position: relative;
+                        width: 100%;
                         height: 100%;
-                        width: auto;
-                        max-width: 100%;
-                        object-fit: contain; /* NO CROPPING */
+                        object-fit: contain; /* CRITICAL FIX: Ensures full art is visible */
                         z-index: 2;
+                        filter: drop-shadow(0 0 20px rgba(0,0,0,0.5));
                     }
 
-                    .info-overlay {
-                        padding: 25px;
-                        background: linear-gradient(transparent, rgba(0,0,0,0.95));
-                        margin-top: -100px;
-                        position: relative;
+                    /* INFO OVERLAY */
+                    .info-layer {
+                        position: absolute;
+                        bottom: 0; left: 0; right: 0;
+                        padding: 80px 25px 25px 25px;
+                        background: linear-gradient(to top, rgba(0,0,0,1) 10%, transparent);
                         z-index: 3;
                     }
 
-                    .badge {
+                    .card-badge {
                         position: absolute;
                         top: 20px; right: 20px;
-                        padding: 5px 12px;
                         background: var(--accent);
-                        color: black;
+                        color: #000;
                         font-weight: 900;
-                        font-size: 10px;
-                        border-radius: 5px;
+                        font-size: 11px;
+                        padding: 6px 14px;
+                        border-radius: 8px;
                         z-index: 4;
+                        text-transform: uppercase;
+                        box-shadow: 0 5px 15px rgba(0,212,255,0.3);
                     }
 
-                    .title { font-size: 28px; font-weight: 800; text-shadow: 0 2px 10px rgba(0,0,0,0.5); }
-                    .status { color: var(--accent); font-family: monospace; font-size: 13px; margin-top: 5px; }
+                    .show-title { 
+                        font-size: 24px; 
+                        font-weight: 800; 
+                        margin: 0 0 6px 0; 
+                        text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+                        line-height: 1.1;
+                    }
+
+                    .show-meta { 
+                        font-family: monospace; 
+                        font-size: 12px; 
+                        color: #ccc; 
+                        display: flex; 
+                        align-items: center; 
+                        gap: 8px; 
+                    }
+                    
+                    .pulse-dot {
+                        width: 6px; height: 6px; 
+                        background: var(--accent); 
+                        border-radius: 50%;
+                        box-shadow: 0 0 8px var(--accent);
+                    }
 
                     /* MOBILE OPTIMIZATION */
-                    @media (max-width: 600px) {
-                        .poster-box { height: 350px; }
-                        .title { font-size: 20px; }
+                    @media (max-width: 480px) {
+                        .feed-container { padding-top: 80px; gap: 25px; }
+                        .poster-frame { height: 400px; } /* Slightly shorter on small phones */
+                        .show-title { font-size: 20px; }
                     }
                 </style>
             </head>
             <body>
-                <div class="feed">
-                    <h1 style="text-align:center; letter-spacing:-2px;">CHRONO-SYNC</h1>
-                    ${schedules.map(s => `
-                        <div class="card">
-                            <div class="badge">${s.badge}</div>
-                            <div class="poster-box">
-                                <img src="${s.poster}" class="poster-bg">
-                                <img src="${s.poster}" class="main-poster">
-                            </div>
-                            <div class="info-overlay">
-                                <div class="title">${s.title}</div>
-                                <div class="status">● ${s.subLabel}</div>
-                            </div>
+                ${NAV_COMPONENT || ''}
+                
+                <div class="feed-container">
+                    <div class="header-section">
+                        <h1 class="header-title">CHRONO-SYNC</h1>
+                        <div class="header-sub">JARVIS AGENT // UNIVERSAL_UPLINK_ACTIVE</div>
+                    </div>
+
+                    ${sorted.map(s => `
+                        <div class="ultra-card">
+                            <a href="/show/${s.type}/${s.id}" style="text-decoration:none; color:inherit;">
+                                <div class="card-badge" style="background:${getBadgeColor(s.badge)}">${s.badge}</div>
+                                <div class="poster-frame">
+                                    <img src="${s.poster}" class="poster-blur" alt="bg">
+                                    <img src="${s.poster}" class="poster-main" alt="${s.title}">
+                                    <div class="info-layer">
+                                        <h2 class="show-title">${s.title}</h2>
+                                        <div class="show-meta">
+                                            ${s.badge === 'LIVE' ? '<div class="pulse-dot"></div>' : ''}
+                                            ${s.subLabel}
+                                        </div>
+                                    </div>
+                                </div>
+                            </a>
                         </div>
                     `).join('')}
                 </div>
-            </body></html>`);
-    } catch (err) { res.status(500).send("Sync Interrupted."); }
+            </body>
+        </html>
+        `);
+    } catch (err) {
+        console.error("Critical System Failure:", err);
+        res.status(500).send("<h3>JARVIS SYSTEM FAILURE. CHECK CONSOLE.</h3>");
+    }
 });
+
+// Helper for Badge Colors
+function getBadgeColor(badge) {
+    const colors = {
+        'LIVE': '#00d4ff',    // Cyan Neon
+        'SAVORING': '#ffffff', // Clean White
+        'UPCOMING': '#f0ad4e', // Warning Orange
+        'HIATUS': '#999',      // Dim Gray
+        'FINISHED': '#333'     // Dark Gray
+    };
+    return colors[badge] || '#fff';
+}
+
+
 
 // --- NEW PAGE: PLAN TO WATCH ---
 app.get('/plan-to-watch', async (req, res) => {
