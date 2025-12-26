@@ -263,7 +263,7 @@ app.get('/anime-detail/:id', async (req, res) => {
     </body>
     </html>
     `);
-});s
+});
 // --- MONGODB CONNECTION ---
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log("Vault Uplink Established (MongoDB)"))
