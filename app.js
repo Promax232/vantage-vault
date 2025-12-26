@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const Groq = require("groq-sdk");
 const path = require('path'); 
 const NodeCache = require('node-cache');
+const jikanjs = require('@mateoaranda/jikanjs');
 require('dotenv').config();
 const app = express();
 const myCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 });
@@ -41,6 +42,23 @@ function getSeasonProgress() {
 
 
 app.use(express.json());
+
+// NEW: Global Search API using jikanjs
+app.get('/api/vantage-search', async (req, res) => {
+    try {
+        const results = await jikanjs.search('anime', req.query.q, 12);
+        const mapped = results.data.map(a => ({
+            id: a.mal_id,
+            title: a.title_english || a.title,
+            poster: a.images.jpg.large_image_url,
+            total: a.episodes || 0
+        }));
+        res.json(mapped);
+    } catch (e) {
+        res.status(500).json({ error: "Uplink Failure" });
+    }
+});
+
 app.get('/vantage', async (req, res) => {
     const sp = getSeasonProgress();
     res.send(`
@@ -48,70 +66,65 @@ app.get('/vantage', async (req, res) => {
     <html lang="en">
     <head>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Vantage Anime OS</title>
+        <title>Vantage OS</title>
         <style>
-            :root { --accent: #00d4ff; --glass: rgba(255, 255, 255, 0.05); }
+            :root { --accent: #00d4ff; --glass: rgba(255, 255, 255, 0.05); --border: rgba(255,255,255,0.1); }
             body { background: #020202; color: white; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; }
-            
-            .dashboard { max-width: 1000px; margin: 0 auto; }
-            .glass-card { 
-                background: var(--glass); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
-                border: 1px solid rgba(255,255,255,0.1); border-radius: 24px; padding: 25px; margin-bottom: 25px;
-            }
-
-            .search-container { position: relative; width: 100%; }
-            .search-bar { 
-                width: 100%; background: rgba(0,0,0,0.5); border: 1px solid #333; 
-                padding: 15px 20px; border-radius: 15px; color: white; font-size: 16px; outline: none; transition: 0.3s;
-            }
-            .search-bar:focus { border-color: var(--accent); box-shadow: 0 0 15px rgba(0,212,255,0.3); }
-
-            .progress-label { display: flex; justify-content: space-between; font-size: 12px; font-weight: 800; margin-bottom: 8px; opacity: 0.8; }
-            .bar-bg { width: 100%; height: 6px; background: #1a1a1a; border-radius: 10px; overflow: hidden; }
+            .dashboard { max-width: 1000px; margin: 0 auto; padding-top: 60px; }
+            .glass-card { background: var(--glass); backdrop-filter: blur(15px); border: 1px solid var(--border); border-radius: 24px; padding: 25px; margin-bottom: 25px; }
+            .bar-bg { width: 100%; height: 6px; background: #1a1a1a; border-radius: 10px; overflow: hidden; margin: 10px 0; }
             .bar-fill { width: ${sp.percent}%; height: 100%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
-
-            .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 20px; margin-top: 30px; }
-            .anime-item { cursor: pointer; border-radius: 15px; overflow: hidden; transition: 0.3s; position: relative; border: 1px solid transparent; }
-            .anime-item:hover { transform: translateY(-5px); border-color: var(--accent); }
-            .anime-item img { width: 100%; aspect-ratio: 2/3; object-fit: cover; }
-            .anime-item-info { padding: 10px; font-size: 13px; font-weight: 600; text-align: center; }
-
-            @media (max-width: 600px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+            .search-bar { width: 100%; background: rgba(0,0,0,0.5); border: 1px solid #333; padding: 18px; border-radius: 15px; color: white; font-size: 16px; outline: none; }
+            .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; margin-top: 30px; }
+            .v-card { background: var(--glass); border-radius: 15px; overflow: hidden; border: 1px solid var(--border); transition: 0.3s; }
+            .v-card img { width: 100%; aspect-ratio: 2/3; object-fit: cover; cursor: pointer; }
+            .sync-tray { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 10px; }
+            .btn-s { border: none; padding: 8px; border-radius: 6px; font-size: 10px; font-weight: 900; cursor: pointer; transition: 0.2s; }
+            .btn-sync { background: var(--accent); color: black; }
+            .btn-plan { background: #333; color: white; }
+            .btn-s:hover { opacity: 0.8; transform: scale(0.95); }
         </style>
     </head>
     <body>
         <div class="dashboard">
             <div class="glass-card">
-                <h1 style="margin:0; font-size: 28px; letter-spacing: -1px;">VANTAGE <span style="color:var(--accent)">ANIME OS</span></h1>
-                <p style="opacity:0.4; font-size:10px; margin-bottom:20px;">SYSTEM STATUS: ONLINE // DATA_SOURCE: JIKAN_V4</p>
-                
-                <div class="progress-label">
-                    <span>${sp.name} ${sp.year}</span>
-                    <span>${sp.percent}% TO ${sp.next}</span>
+                <h1 style="margin:0; font-size: 28px; letter-spacing: -1px;">VANTAGE <span style="color:var(--accent)">OS</span></h1>
+                <div style="display:flex; justify-content:space-between; font-size:11px; margin-top:15px; font-family:monospace; opacity:0.6;">
+                    <span>CALENDAR: ${sp.name}</span>
+                    <span>UPLINK: ${sp.percent}%</span>
                 </div>
                 <div class="bar-bg"><div class="bar-fill"></div></div>
             </div>
 
-            <div class="search-container">
-                <input type="text" id="searchInput" class="search-bar" placeholder="Search any anime globally..." onkeyup="if(event.key==='Enter') searchAnime()">
-            </div>
-
-            <div id="results" class="grid">
-                </div>
+            <input type="text" id="v-search" class="search-bar" placeholder="Scan Global Archives..." onkeyup="if(event.key==='Enter') executeSearch()">
+            
+            <div id="v-results" class="grid"></div>
         </div>
 
         <script>
-            async function searchAnime() {
-                const query = document.getElementById('searchInput').value;
-                const res = await fetch('https://api.jikan.moe/v4/anime?q=' + query);
-                const json = await res.json();
-                const container = document.getElementById('results');
-                container.innerHTML = json.data.map(a => \`
-                    <div class="anime-item" onclick="window.location='/anime-detail/\${a.mal_id}'">
-                        <img src="\${a.images.jpg.large_image_url}">
-                        <div class="anime-item-info">\${a.title}</div>
+            async function executeSearch() {
+                const q = document.getElementById('v-search').value;
+                const resDiv = document.getElementById('v-results');
+                resDiv.innerHTML = '<p style="grid-column:1/-1; text-align:center; opacity:0.5;">Accessing JikanJS Engine...</p>';
+                
+                const r = await fetch('/api/vantage-search?q=' + q);
+                const items = await r.json();
+                
+                resDiv.innerHTML = items.map(i => \`
+                    <div class="v-card">
+                        <img src="\${i.poster}" onclick="location.href='/anime-detail/\${i.id}'">
+                        <div style="padding:10px; font-size:12px; font-weight:bold; height:35px; overflow:hidden; text-align:center;">\${i.title}</div>
+                        <div class="sync-tray">
+                            <button class="btn-s btn-sync" onclick="quickSave('\${i.id}', '\${encodeURIComponent(i.title)}', '\${encodeURIComponent(i.poster)}', 'watching', \${i.total})">SYNC</button>
+                            <button class="btn-s btn-plan" onclick="quickSave('\${i.id}', '\${encodeURIComponent(i.title)}', '\${encodeURIComponent(i.poster)}', 'planned', \${i.total})">PLAN</button>
+                        </div>
                     </div>
                 \`).join('');
+            }
+
+            async function quickSave(id, title, poster, status, total) {
+                await fetch(\`/save?id=\${id}&title=\${title}&poster=\${poster}&type=anime&source=mal&status=\${status}&total=\${total}\`);
+                alert(status === 'watching' ? 'Synced to Vault' : 'Added to Plan');
             }
         </script>
     </body>
@@ -119,66 +132,54 @@ app.get('/vantage', async (req, res) => {
     `);
 });
 
-
 app.get('/anime-detail/:id', async (req, res) => {
     const malId = req.params.id;
-    const cacheKey = `vantage_detail_${malId}`;
+    const cacheKey = `v_detail_${malId}`;
     let data = myCache.get(cacheKey);
 
     if (!data) {
-        // Fetch full data including characters
-        const [mainRes, charRes] = await Promise.all([
-            axios.get(`https://api.jikan.moe/v4/anime/${malId}/full`),
-            axios.get(`https://api.jikan.moe/v4/anime/${malId}/characters`)
+        // Using the jikanjs wrapper for detail fetching
+        const [main, chars] = await Promise.all([
+            jikanjs.loadAnime(malId, 'full'),
+            jikanjs.loadAnime(malId, 'characters')
         ]);
-        data = { ...mainRes.data.data, characters: charRes.data.data.slice(0, 6) };
+        data = { ...main.data, characters: chars.data.slice(0, 6) };
         myCache.set(cacheKey, data);
     }
 
     res.send(`
     <style>
         body { background: #000; color: white; font-family: 'Inter', sans-serif; margin:0; }
-        .hero { 
-            height: 50vh; width:100%; position:relative; 
-            display:flex; align-items:flex-end; padding: 40px; box-sizing:border-box;
-        }
-        .hero-bg { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; filter:blur(30px) brightness(0.3); z-index:-1; }
-        .detail-container { max-width: 1000px; margin: -100px auto 50px; padding: 0 20px; display: flex; gap: 40px; }
-        .poster { width: 280px; border-radius: 20px; box-shadow: 0 20px 50px rgba(0,0,0,1); }
-        .info-panel { flex: 1; margin-top: 120px; }
-        .trailer-btn { 
-            background: #ff0000; color: white; padding: 12px 25px; border-radius: 50px; 
-            text-decoration: none; font-weight: 800; display: inline-flex; align-items: center; gap: 10px;
-        }
-        .char-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-top: 20px; }
-        .char-card { text-align: center; font-size: 11px; opacity: 0.8; }
-        .char-card img { width: 100%; border-radius: 10px; }
-        
-        @media (max-width: 800px) {
-            .detail-container { flex-direction: column; align-items: center; text-align: center; }
-            .info-panel { margin-top: 20px; }
-        }
+        .hero { height: 45vh; width:100%; position:relative; display:flex; align-items:flex-end; padding: 40px; box-sizing:border-box; }
+        .hero-bg { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; filter:blur(40px) brightness(0.2); z-index:-1; }
+        .content { max-width: 1100px; margin: -120px auto 50px; padding: 0 20px; display: flex; gap: 40px; }
+        .poster { width: 300px; border-radius: 20px; box-shadow: 0 30px 60px rgba(0,0,0,1); border: 1px solid rgba(255,255,255,0.1); }
+        .right-panel { flex: 1; margin-top: 140px; }
+        .t-btn { background: #ff0000; color: white; padding: 14px 28px; border-radius: 50px; text-decoration: none; font-weight: 900; display: inline-flex; align-items: center; gap: 10px; margin-top: 20px; box-shadow: 0 0 20px rgba(255,0,0,0.3); }
+        .char-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 15px; margin-top: 30px; }
+        .char-card { text-align: center; }
+        .char-card img { width: 100%; aspect-ratio: 1/1; object-fit: cover; border-radius: 50%; border: 2px solid #222; }
+        .char-card p { font-size: 10px; margin-top: 8px; opacity: 0.6; }
+        @media (max-width: 800px) { .content { flex-direction: column; align-items: center; text-align: center; } .right-panel { margin-top: 20px; } }
     </style>
 
     <div class="hero">
         <img src="${data.images.jpg.large_image_url}" class="hero-bg">
-        <h1 style="font-size: 42px; text-shadow: 0 5px 15px rgba(0,0,0,0.5);">${data.title}</h1>
+        <h1 style="font-size: clamp(24px, 5vw, 48px); margin:0; text-shadow: 0 10px 30px rgba(0,0,0,1);">${data.title}</h1>
     </div>
 
-    <div class="detail-container">
+    <div class="content">
         <img src="${data.images.jpg.large_image_url}" class="poster">
-        
-        <div class="info-panel">
-            <p style="opacity:0.7; line-height:1.6;">${data.synopsis}</p>
+        <div class="right-panel">
+            <p style="opacity:0.8; line-height:1.8; font-size: 15px;">${data.synopsis}</p>
+            ${data.trailer.url ? `<a href="${data.trailer.url}" target="_blank" class="t-btn">WATCH TRAILER</a>` : ''}
             
-            ${data.trailer.url ? `<a href="${data.trailer.url}" target="_blank" class="trailer-btn">▶ WATCH TRAILER</a>` : ''}
-            
-            <h3 style="margin-top:40px; border-bottom: 1px solid #333; padding-bottom: 10px;">CORE CHARACTERS</h3>
+            <h3 style="margin-top:50px; font-size:12px; letter-spacing:3px; opacity:0.4;">CAST_DIRECTIVE</h3>
             <div class="char-grid">
                 ${data.characters.map(c => `
                     <div class="char-card">
                         <img src="${c.character.images.jpg.image_url}">
-                        <p>${c.character.name}</p>
+                        <p>${c.character.name.split(',')[0]}</p>
                     </div>
                 `).join('')}
             </div>
@@ -727,4 +728,27 @@ app.get('/api/delete-show/:id', async (req, res) => {
     res.redirect('/watchlist');
 });
 app.get('/', (req, res) => res.redirect('/watchlist'));
+app.get('/save', async (req, res) => {
+    const { id, title, poster, type, source, total, status } = req.query;
+    try {
+        await Show.findOneAndUpdate(
+            { id: id }, 
+            { 
+                id, 
+                title: decodeURIComponent(title), 
+                poster: decodeURIComponent(poster), 
+                type, 
+                source, 
+                currentEpisode: 0, 
+                totalEpisodes: parseInt(total) || 12, 
+                status: status || 'watching',
+                startDate: new Date().toISOString() 
+            }, 
+            { upsert: true }
+        );
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false });
+    }
+});
 app.listen(PORT, () => console.log(`🚀 VANTAGE ONLINE | PORT ${PORT}`));
