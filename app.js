@@ -259,187 +259,154 @@ app.get('/watchlist', async (req, res) => {
     </body></html>`);
 });
 
-// --- THE UNIVERSAL CACHE ---
-const RADAR_CACHE = new Map();
-const CACHE_DURATION = 1000 * 60 * 60 * 12; // 12-hour heartbeat
-
+// --- THE REFINED SIMKL ENGINE ---
 app.get('/chrono-sync', async (req, res) => {
     try {
         const list = await getWatchlist();
-        // Filter out completed shows to keep the radar focused on what's next
+        // Separate Active from Hall of Fame to prioritize sync speed
         const activeItems = list.filter(s => ['watching', 'planned'].includes(s.status));
         
         const schedules = await Promise.all(activeItems.map(async (show) => {
-            const cacheKey = `simkl_${show.id}`;
-            const cachedEntry = RADAR_CACHE.get(cacheKey);
-
-            if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_DURATION)) {
-                return cachedEntry.intel;
-            }
-
             let intel = {
                 id: show.id,
                 title: show.title || "Unknown Asset",
                 poster: show.poster || "",
                 subLabel: "CHRONO_OFFLINE",
-                badge: "VAULT",
-                sortWeight: 100,
+                badge: show.status === 'watching' ? "SAVORING" : "UPCOMING",
                 type: show.type || 'tv'
             };
 
-            // Fix TMDB poster paths if they exist
-            if (intel.poster && !intel.poster.startsWith('http')) {
-                intel.poster = `https://image.tmdb.org/t/p/w780${intel.poster}`;
-            }
-
             try {
-                // --- THE SIMKL UNIVERSAL UPLINK ---
-                // We use the ID to find the show. Simkl handles Anime (via MAL ID) and Western (via TMDB ID).
+                // THE TRANSLATOR: Determine if we use MAL ID or TMDB ID
                 let simklUrl = "";
                 const cleanId = show.id.toString().split('_')[0];
                 
-                if (show.source === 'mal' || show.type === 'anime') {
+                if (show.type === 'anime' || (show.id.toString().length < 7 && !isNaN(cleanId))) {
+                    // Search by MAL ID specifically to avoid "Ghost Titles"
                     simklUrl = `https://api.simkl.com/anime/${cleanId}?client_id=${process.env.SIMKL_CLIENT_ID}&extended=full`;
                 } else {
+                    // Search by TMDB/TVDB for Western Media (Lupin, Chernobyl)
                     simklUrl = `https://api.simkl.com/tv/${cleanId}?client_id=${process.env.SIMKL_CLIENT_ID}&extended=full`;
                 }
 
                 const response = await fetch(simklUrl);
                 const data = await response.json();
 
-                if (data && data.title) {
+                if (data && data.title && !data.error) {
                     intel.title = data.title;
-                    
-                    if (data.status === "airing" || data.status === "returning series") {
+                    if (data.status === "airing") {
                         intel.badge = "LIVE";
-                        intel.subLabel = data.next_episode ? `NEXT: ${data.next_episode.date}` : "Airing Weekly";
-                        intel.sortWeight = 1;
-                    } else if (data.status === "preating" || data.status === "planned") {
+                        intel.subLabel = data.next_episode ? `Next: ${data.next_episode.date}` : "Airing Weekly";
+                    } else if (data.status === "preating" || data.status === "returning series") {
                         intel.badge = "UPCOMING";
-                        intel.subLabel = "In Production";
-                        intel.sortWeight = 10;
+                        intel.subLabel = "Sequel on Radar";
                     } else {
-                        intel.badge = "FINISHED";
                         intel.subLabel = "Full Season Available";
-                        intel.sortWeight = 50;
                     }
                 }
-
-                RADAR_CACHE.set(cacheKey, { intel, timestamp: Date.now() });
-            } catch (err) {
-                intel.subLabel = "SYNC_ERROR";
-            }
+            } catch (err) { console.log("Sync Delay..."); }
             return intel;
         }));
 
-        const sorted = schedules.sort((a, b) => a.sortWeight - b.sortWeight);
-
-        // --- THE RESPONSIVE HUD ---
         res.send(`<html>
             <head>
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                ${HUD_STYLE}
                 <style>
-                    :root { --accent: #00d4ff; }
-                    body { background: #050505; color: white; font-family: 'Inter', sans-serif; margin: 0; }
+                    :root { --accent: #00d4ff; --bg: #050505; }
+                    body { background: var(--bg); color: white; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; }
                     
-                    /* THE FEED LAYOUT */
-                    .feed-container { 
-                        display: flex; 
-                        flex-direction: column; 
-                        gap: 25px; 
-                        padding: 100px 20px; 
-                        max-width: 800px; /* Slimmer for that high-end social feel */
-                        margin: auto; 
-                    }
+                    /* THE FEED - Vertical Stack */
+                    .feed { display: flex; flex-direction: column; gap: 40px; max-width: 700px; margin: 80px auto; }
 
-                    .tactical-card {
+                    .card {
                         position: relative;
                         width: 100%;
-                        border-radius: 24px;
-                        overflow: hidden;
+                        border-radius: 20px;
                         background: #111;
-                        border: 1px solid rgba(255,255,255,0.05);
-                        transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+                        overflow: hidden;
+                        border: 1px solid rgba(255,255,255,0.1);
                     }
 
-                    .tactical-card:hover { transform: scale(1.02); border-color: var(--accent); }
-
-                    .poster-container {
+                    /* FIX: No more cropping */
+                    .poster-box {
                         position: relative;
                         width: 100%;
-                        aspect-ratio: 16/9; /* Cinematic wide view */
+                        height: 450px; /* Consistent height for a social feed feel */
+                        background: black;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
                         overflow: hidden;
                     }
 
-                    .poster-img { width: 100%; height: 100%; object-fit: cover; }
-
-                    .glass-overlay {
+                    /* The "Blurred Background" effect for vertical posters in wide boxes */
+                    .poster-bg {
                         position: absolute;
-                        bottom: 0; left: 0; right: 0;
-                        padding: 30px;
-                        background: linear-gradient(transparent, rgba(0,0,0,0.9));
-                        backdrop-filter: blur(5px);
+                        width: 110%; height: 110%;
+                        filter: blur(30px) brightness(0.3);
+                        object-fit: cover;
+                        z-index: 1;
+                    }
+
+                    .main-poster {
+                        position: relative;
+                        height: 100%;
+                        width: auto;
+                        max-width: 100%;
+                        object-fit: contain; /* NO CROPPING */
+                        z-index: 2;
+                    }
+
+                    .info-overlay {
+                        padding: 25px;
+                        background: linear-gradient(transparent, rgba(0,0,0,0.95));
+                        margin-top: -100px;
+                        position: relative;
+                        z-index: 3;
                     }
 
                     .badge {
                         position: absolute;
                         top: 20px; right: 20px;
-                        padding: 6px 14px;
-                        border-radius: 8px;
-                        font-size: 11px;
-                        font-weight: 900;
-                        text-transform: uppercase;
-                        letter-spacing: 1px;
+                        padding: 5px 12px;
                         background: var(--accent);
                         color: black;
+                        font-weight: 900;
+                        font-size: 10px;
+                        border-radius: 5px;
+                        z-index: 4;
                     }
 
-                    .title { font-size: 24px; font-weight: 800; margin-bottom: 5px; }
-                    .status-line { color: var(--accent); font-family: monospace; font-size: 12px; display:flex; align-items:center; gap:8px; }
+                    .title { font-size: 28px; font-weight: 800; text-shadow: 0 2px 10px rgba(0,0,0,0.5); }
+                    .status { color: var(--accent); font-family: monospace; font-size: 13px; margin-top: 5px; }
 
-                    /* MOBILE FIX */
+                    /* MOBILE OPTIMIZATION */
                     @media (max-width: 600px) {
-                        .feed-container { padding: 80px 15px; }
-                        .title { font-size: 18px; }
-                        .poster-container { aspect-ratio: 4/3; } /* Taller for mobile thumbs */
+                        .poster-box { height: 350px; }
+                        .title { font-size: 20px; }
                     }
                 </style>
             </head>
             <body>
-                ${NAV_COMPONENT}
-                <div class="feed-container">
-                    <div style="margin-bottom: 20px;">
-                        <h1 style="font-size: 40px; letter-spacing: -2px; margin:0;">CHRONO-SYNC</h1>
-                        <p style="opacity:0.4; font-family:monospace; font-size:12px;">UNIVERSAL_UPLINK // SIMKL_CORE</p>
-                    </div>
-
-                    ${sorted.map(s => `
-                        <div class="tactical-card">
-                            <a href="/show/${s.type}/${s.id}" style="text-decoration:none; color:inherit;">
-                                <div class="poster-container">
-                                    <img src="${s.poster}" class="poster-img">
-                                    <div class="badge" style="background:${getBadgeColor(s.badge)}">${s.badge}</div>
-                                    <div class="glass-overlay">
-                                        <div class="title">${s.title}</div>
-                                        <div class="status-line">
-                                            <span style="width:8px; height:8px; background:var(--accent); border-radius:50%; box-shadow: 0 0 10px var(--accent);"></span>
-                                            ${s.subLabel}
-                                        </div>
-                                    </div>
-                                </div>
-                            </a>
+                <div class="feed">
+                    <h1 style="text-align:center; letter-spacing:-2px;">CHRONO-SYNC</h1>
+                    ${schedules.map(s => `
+                        <div class="card">
+                            <div class="badge">${s.badge}</div>
+                            <div class="poster-box">
+                                <img src="${s.poster}" class="poster-bg">
+                                <img src="${s.poster}" class="main-poster">
+                            </div>
+                            <div class="info-overlay">
+                                <div class="title">${s.title}</div>
+                                <div class="status">● ${s.subLabel}</div>
+                            </div>
                         </div>
                     `).join('')}
                 </div>
             </body></html>`);
-    } catch (err) { res.status(500).send("System Reboot Required."); }
+    } catch (err) { res.status(500).send("Sync Interrupted."); }
 });
-
-function getBadgeColor(badge) {
-    const colors = { 'LIVE': '#00d4ff', 'UPCOMING': '#f0ad4e', 'FINISHED': '#666' };
-    return colors[badge] || '#fff';
-}
 
 // --- NEW PAGE: PLAN TO WATCH ---
 app.get('/plan-to-watch', async (req, res) => {
