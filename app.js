@@ -259,24 +259,18 @@ app.get('/watchlist', async (req, res) => {
     </body></html>`);
 });
 
-// --- THE PURIST CACHE ---
+// --- THE UNIVERSAL CACHE ---
 const RADAR_CACHE = new Map();
-const CACHE_DURATION = 1000 * 60 * 60 * 24; // 24 Hours
+const CACHE_DURATION = 1000 * 60 * 60 * 12; // 12-hour heartbeat
 
 app.get('/chrono-sync', async (req, res) => {
     try {
         const list = await getWatchlist();
+        // Filter out completed shows to keep the radar focused on what's next
+        const activeItems = list.filter(s => ['watching', 'planned'].includes(s.status));
         
-        // --- FILTER: ONLY ANIME (Watching or Planned) ---
-        // This ensures the loop only processes items with source 'mal' or type 'anime'
-        const animeItems = list.filter(s => 
-            (s.source === 'mal' || s.type === 'anime') && 
-            ['watching', 'planned'].includes(s.status)
-        );
-        
-        const now = new Date();
-        const schedules = await Promise.all(animeItems.map(async (show) => {
-            const cacheKey = `radar_${show.id}`;
+        const schedules = await Promise.all(activeItems.map(async (show) => {
+            const cacheKey = `simkl_${show.id}`;
             const cachedEntry = RADAR_CACHE.get(cacheKey);
 
             if (cachedEntry && (Date.now() - cachedEntry.timestamp < CACHE_DURATION)) {
@@ -287,124 +281,164 @@ app.get('/chrono-sync', async (req, res) => {
                 id: show.id,
                 title: show.title || "Unknown Asset",
                 poster: show.poster || "",
-                subLabel: "SYNCING...",
+                subLabel: "CHRONO_OFFLINE",
                 badge: "VAULT",
                 sortWeight: 100,
-                type: 'anime'
+                type: show.type || 'tv'
             };
 
-            // Poster Sanitization
+            // Fix TMDB poster paths if they exist
             if (intel.poster && !intel.poster.startsWith('http')) {
-                intel.poster = `https://image.tmdb.org/t/p/w500${intel.poster}`;
+                intel.poster = `https://image.tmdb.org/t/p/w780${intel.poster}`;
             }
 
             try {
-                // --- THE ANILIST UPLINK ---
+                // --- THE SIMKL UNIVERSAL UPLINK ---
+                // We use the ID to find the show. Simkl handles Anime (via MAL ID) and Western (via TMDB ID).
+                let simklUrl = "";
                 const cleanId = show.id.toString().split('_')[0];
                 
-                const query = `
-                query ($id: Int) {
-                  Media (idMal: $id, type: ANIME) {
-                    title { english romanized }
-                    status
-                    episodes
-                    nextAiringEpisode { airingAt timeUntilAiring episode }
-                  }
-                }`;
+                if (show.source === 'mal' || show.type === 'anime') {
+                    simklUrl = `https://api.simkl.com/anime/${cleanId}?client_id=${process.env.SIMKL_CLIENT_ID}&extended=full`;
+                } else {
+                    simklUrl = `https://api.simkl.com/tv/${cleanId}?client_id=${process.env.SIMKL_CLIENT_ID}&extended=full`;
+                }
 
-                const response = await fetch('https://graphql.anilist.co', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-                    body: JSON.stringify({ query, variables: { id: parseInt(cleanId) } })
-                });
+                const response = await fetch(simklUrl);
+                const data = await response.json();
 
-                const { data } = await response.json();
-                if (data && data.Media) {
-                    const a = data.Media;
-                    intel.title = a.title.english || a.title.romanized;
+                if (data && data.title) {
+                    intel.title = data.title;
                     
-                    if (a.nextAiringEpisode) {
-                        const next = a.nextAiringEpisode;
-                        const days = Math.floor(next.timeUntilAiring / 86400);
+                    if (data.status === "airing" || data.status === "returning series") {
                         intel.badge = "LIVE";
-                        intel.subLabel = `EP ${next.episode}: ${days}d left`;
+                        intel.subLabel = data.next_episode ? `NEXT: ${data.next_episode.date}` : "Airing Weekly";
                         intel.sortWeight = 1;
-                    } else if (a.status === "RELEASING") {
-                        intel.badge = "LIVE";
-                        intel.subLabel = "Airing Weekly";
-                        intel.sortWeight = 2;
-                    } else if (a.status === "NOT_YET_RELEASED") {
+                    } else if (data.status === "preating" || data.status === "planned") {
                         intel.badge = "UPCOMING";
                         intel.subLabel = "In Production";
                         intel.sortWeight = 10;
                     } else {
                         intel.badge = "FINISHED";
-                        intel.subLabel = `${a.episodes || '?'} Episodes Total`;
-                        intel.sortWeight = 200;
+                        intel.subLabel = "Full Season Available";
+                        intel.sortWeight = 50;
                     }
                 }
 
                 RADAR_CACHE.set(cacheKey, { intel, timestamp: Date.now() });
             } catch (err) {
-                intel.subLabel = "UPLINK_OFFLINE";
+                intel.subLabel = "SYNC_ERROR";
             }
-
             return intel;
         }));
 
         const sorted = schedules.sort((a, b) => a.sortWeight - b.sortWeight);
 
+        // --- THE RESPONSIVE HUD ---
         res.send(`<html>
-            <head>${HUD_STYLE}</head>
-            <body style="background:#020202; color:#fff; font-family:sans-serif;">
-                ${NAV_COMPONENT}
-                <div style="padding:100px 40px; max-width:1400px; margin:auto;">
+            <head>
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                ${HUD_STYLE}
+                <style>
+                    :root { --accent: #00d4ff; }
+                    body { background: #050505; color: white; font-family: 'Inter', sans-serif; margin: 0; }
                     
-                    <div style="display:flex; justify-content:space-between; align-items:flex-end; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:20px; margin-bottom:40px;">
-                        <div>
-                            <h1 style="font-size:35px; font-weight:900; margin:0; letter-spacing:-1.5px;">CHRONO-<span style="color:var(--accent);">SYNC</span></h1>
-                            <p style="font-family:monospace; font-size:10px; opacity:0.5; margin:5px 0 0 0;">ANILIST_UPLINK // ACTIVE_ANIME: ${sorted.length}</p>
-                        </div>
-                        <div style="display:flex; gap:20px; font-size:10px; font-family:monospace; letter-spacing:1px;">
-                            <span style="color:var(--accent);">● LIVE</span>
-                            <span style="color:#f0ad4e;">● UPCOMING</span>
-                            <span style="color:#444;">● FINISHED</span>
-                        </div>
+                    /* THE FEED LAYOUT */
+                    .feed-container { 
+                        display: flex; 
+                        flex-direction: column; 
+                        gap: 25px; 
+                        padding: 100px 20px; 
+                        max-width: 800px; /* Slimmer for that high-end social feel */
+                        margin: auto; 
+                    }
+
+                    .tactical-card {
+                        position: relative;
+                        width: 100%;
+                        border-radius: 24px;
+                        overflow: hidden;
+                        background: #111;
+                        border: 1px solid rgba(255,255,255,0.05);
+                        transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+                    }
+
+                    .tactical-card:hover { transform: scale(1.02); border-color: var(--accent); }
+
+                    .poster-container {
+                        position: relative;
+                        width: 100%;
+                        aspect-ratio: 16/9; /* Cinematic wide view */
+                        overflow: hidden;
+                    }
+
+                    .poster-img { width: 100%; height: 100%; object-fit: cover; }
+
+                    .glass-overlay {
+                        position: absolute;
+                        bottom: 0; left: 0; right: 0;
+                        padding: 30px;
+                        background: linear-gradient(transparent, rgba(0,0,0,0.9));
+                        backdrop-filter: blur(5px);
+                    }
+
+                    .badge {
+                        position: absolute;
+                        top: 20px; right: 20px;
+                        padding: 6px 14px;
+                        border-radius: 8px;
+                        font-size: 11px;
+                        font-weight: 900;
+                        text-transform: uppercase;
+                        letter-spacing: 1px;
+                        background: var(--accent);
+                        color: black;
+                    }
+
+                    .title { font-size: 24px; font-weight: 800; margin-bottom: 5px; }
+                    .status-line { color: var(--accent); font-family: monospace; font-size: 12px; display:flex; align-items:center; gap:8px; }
+
+                    /* MOBILE FIX */
+                    @media (max-width: 600px) {
+                        .feed-container { padding: 80px 15px; }
+                        .title { font-size: 18px; }
+                        .poster-container { aspect-ratio: 4/3; } /* Taller for mobile thumbs */
+                    }
+                </style>
+            </head>
+            <body>
+                ${NAV_COMPONENT}
+                <div class="feed-container">
+                    <div style="margin-bottom: 20px;">
+                        <h1 style="font-size: 40px; letter-spacing: -2px; margin:0;">CHRONO-SYNC</h1>
+                        <p style="opacity:0.4; font-family:monospace; font-size:12px;">UNIVERSAL_UPLINK // SIMKL_CORE</p>
                     </div>
 
-                    <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:35px;">
-                        ${sorted.map(s => `
-                            <div class="glass" style="border-radius:20px; overflow:hidden; border:1px solid rgba(255,255,255,0.03); transition: 0.3s;" onmouseover="this.style.borderColor='var(--accent)';" onmouseout="this.style.borderColor='rgba(255,255,255,0.03)';">
-                                <a href="/show/anime/${s.id}" style="text-decoration:none; color:inherit;">
-                                    <div style="position:relative; aspect-ratio:2/3; overflow:hidden;">
-                                        <img src="${s.poster}" style="width:100%; height:100%; object-fit:cover;">
-                                        <div style="position:absolute; top:15px; right:15px; background:${getBadgeColor(s.badge)}; color:black; font-weight:900; padding:5px 12px; font-size:10px; border-radius:6px; box-shadow:0 8px 20px rgba(0,0,0,0.6);">${s.badge}</div>
-                                        ${s.sortWeight >= 100 ? `<div style="position:absolute; inset:0; background:rgba(0,0,0,0.5); pointer-events:none;"></div>` : ''}
-                                    </div>
-                                    <div style="padding:20px;">
-                                        <div style="font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:14px; margin-bottom:4px;">${s.title}</div>
-                                        <div style="color:var(--accent); font-family:monospace; font-size:10px; font-weight:bold; display:flex; align-items:center; gap:6px;">
-                                            <span style="width:5px; height:5px; background:var(--accent); border-radius:50%; display:inline-block; ${s.sortWeight < 100 ? 'animation: pulse 2s infinite;' : ''}"></span>
+                    ${sorted.map(s => `
+                        <div class="tactical-card">
+                            <a href="/show/${s.type}/${s.id}" style="text-decoration:none; color:inherit;">
+                                <div class="poster-container">
+                                    <img src="${s.poster}" class="poster-img">
+                                    <div class="badge" style="background:${getBadgeColor(s.badge)}">${s.badge}</div>
+                                    <div class="glass-overlay">
+                                        <div class="title">${s.title}</div>
+                                        <div class="status-line">
+                                            <span style="width:8px; height:8px; background:var(--accent); border-radius:50%; box-shadow: 0 0 10px var(--accent);"></span>
                                             ${s.subLabel}
                                         </div>
                                     </div>
-                                </a>
-                            </div>
-                        `).join('')}
-                    </div>
+                                </div>
+                            </a>
+                        </div>
+                    `).join('')}
                 </div>
-                <style>
-                    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
-                </style>
             </body></html>`);
-    } catch (err) { res.status(500).send("Uplink Failure."); }
+    } catch (err) { res.status(500).send("System Reboot Required."); }
 });
 
 function getBadgeColor(badge) {
-    const colors = {
-        'LIVE': 'var(--accent)', 'UPCOMING': '#f0ad4e', 'FINISHED': '#444'
-    };
-    return colors[badge] || '#ddd';
+    const colors = { 'LIVE': '#00d4ff', 'UPCOMING': '#f0ad4e', 'FINISHED': '#666' };
+    return colors[badge] || '#fff';
 }
 
 // --- NEW PAGE: PLAN TO WATCH ---
