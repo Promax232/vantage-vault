@@ -2,7 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const mongoose = require('mongoose'); 
 const Groq = require("groq-sdk");
-const path = require('path'); 
+const cpath = require('path'); 
 const NodeCache = require('node-cache');
 const jikanjs = require('@mateoaranda/jikanjs');
 require('dotenv').config();
@@ -66,71 +66,148 @@ app.get('/vantage', async (req, res) => {
     <html lang="en">
     <head>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Vantage OS</title>
+        <title>VANTAGE OS // INTELLIGENCE</title>
         <style>
-            :root { --accent: #00d4ff; --glass: rgba(255, 255, 255, 0.05); --border: rgba(255,255,255,0.1); }
-            body { background: #020202; color: white; font-family: 'Inter', sans-serif; margin: 0; padding: 20px; }
-            .dashboard { max-width: 1000px; margin: 0 auto; padding-top: 60px; }
-            .glass-card { background: var(--glass); backdrop-filter: blur(15px); border: 1px solid var(--border); border-radius: 24px; padding: 25px; margin-bottom: 25px; }
-            .bar-bg { width: 100%; height: 6px; background: #1a1a1a; border-radius: 10px; overflow: hidden; margin: 10px 0; }
-            .bar-fill { width: ${sp.percent}%; height: 100%; background: var(--accent); box-shadow: 0 0 10px var(--accent); }
-            .search-bar { width: 100%; background: rgba(0,0,0,0.5); border: 1px solid #333; padding: 18px; border-radius: 15px; color: white; font-size: 16px; outline: none; }
-            .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; margin-top: 30px; }
-            .v-card { background: var(--glass); border-radius: 15px; overflow: hidden; border: 1px solid var(--border); transition: 0.3s; }
-            .v-card img { width: 100%; aspect-ratio: 2/3; object-fit: cover; cursor: pointer; }
-            .sync-tray { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; padding: 10px; }
-            .btn-s { border: none; padding: 8px; border-radius: 6px; font-size: 10px; font-weight: 900; cursor: pointer; transition: 0.2s; }
-            .btn-sync { background: var(--accent); color: black; }
-            .btn-plan { background: #333; color: white; }
-            .btn-s:hover { opacity: 0.8; transform: scale(0.95); }
+            :root { --accent: #00d4ff; --bg: #050505; --glass: rgba(255,255,255,0.03); --border: rgba(255,255,255,0.08); }
+            body { background: var(--bg); color: white; font-family: 'Inter', sans-serif; margin: 0; overflow-x: hidden; }
+            
+            /* Apple-Style Navigation */
+            .os-nav { display: flex; gap: 20px; padding: 20px; border-bottom: 1px solid var(--border); overflow-x: auto; sticky: top; background: rgba(5,5,5,0.8); backdrop-filter: blur(20px); z-index: 100; }
+            .nav-item { opacity: 0.5; cursor: pointer; font-size: 11px; font-weight: 800; letter-spacing: 2px; white-space: nowrap; transition: 0.3s; }
+            .nav-item.active { opacity: 1; color: var(--accent); border-bottom: 1px solid var(--accent); }
+
+            .dashboard { padding: 30px; max-width: 1400px; margin: auto; }
+            
+            /* Season Progress Card */
+            .hud-card { background: var(--glass); border: 1px solid var(--border); border-radius: 20px; padding: 25px; margin-bottom: 30px; position: relative; overflow: hidden; }
+            .bar-bg { width: 100%; height: 4px; background: #111; border-radius: 10px; margin-top: 15px; }
+            .bar-fill { width: ${sp.percent}%; height: 100%; background: var(--accent); box-shadow: 0 0 15px var(--accent); }
+
+            /* Grid Layout */
+            .v-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 25px; }
+            .v-card { position: relative; border-radius: 12px; overflow: hidden; background: #111; transition: transform 0.4s cubic-bezier(0.165, 0.84, 0.44, 1); border: 1px solid transparent; }
+            .v-card:hover { transform: scale(1.05); border-color: var(--accent); }
+            .v-card img { width: 100%; aspect-ratio: 2/3; object-fit: cover; }
+            .v-info { padding: 12px; font-size: 12px; font-weight: 600; background: linear-gradient(transparent, rgba(0,0,0,0.9)); position: absolute; bottom: 0; width: 100%; box-sizing: border-box; }
+            
+            .score-badge { position: absolute; top: 10px; right: 10px; background: var(--accent); color: black; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 900; }
+
+            /* Controls */
+            .search-box { width: 100%; background: #111; border: 1px solid #222; padding: 15px 25px; border-radius: 50px; color: white; margin-bottom: 30px; outline: none; transition: 0.3s; }
+            .search-box:focus { border-color: var(--accent); box-shadow: 0 0 20px rgba(0,212,255,0.1); }
+            
+            @media (max-width: 600px) { .v-grid { grid-template-columns: repeat(2, 1fr); gap: 15px; } }
         </style>
     </head>
     <body>
+        <nav class="os-nav">
+            <div class="nav-item active" onclick="loadTab('current', this)">CURRENT SEASON</div>
+            <div class="nav-item" onclick="loadTab('top', this)">HALL OF FAME</div>
+            <div class="nav-item" onclick="loadTab('schedule', this)">CHRONO-SYNC</div>
+            <div class="nav-item" onclick="loadTab('archive', this)">DEEP ARCHIVE</div>
+        </nav>
+
         <div class="dashboard">
-            <div class="glass-card">
-                <h1 style="margin:0; font-size: 28px; letter-spacing: -1px;">VANTAGE <span style="color:var(--accent)">OS</span></h1>
-                <div style="display:flex; justify-content:space-between; font-size:11px; margin-top:15px; font-family:monospace; opacity:0.6;">
-                    <span>CALENDAR: ${sp.name}</span>
-                    <span>UPLINK: ${sp.percent}%</span>
+            <div id="dynamic-header">
+                <div class="hud-card">
+                    <h2 style="margin:0; letter-spacing:-1px;">${sp.name} ${sp.year} <span style="opacity:0.3; font-weight:300;">OS INTERFACE</span></h2>
+                    <div class="bar-bg"><div class="bar-fill"></div></div>
+                    <p style="font-size:9px; opacity:0.4; margin-top:10px;">SYSTEM STATUS: NOMINAL // JIKAN_V4 ACTIVE</p>
                 </div>
-                <div class="bar-bg"><div class="bar-fill"></div></div>
             </div>
 
-            <input type="text" id="v-search" class="search-bar" placeholder="Scan Global Archives..." onkeyup="if(event.key==='Enter') executeSearch()">
-            
-            <div id="v-results" class="grid"></div>
+            <input type="text" id="master-search" class="search-box" placeholder="Search Global Archives..." onkeyup="if(event.key==='Enter') searchMode()">
+
+            <div id="v-content" class="v-grid">
+                </div>
         </div>
 
         <script>
-            async function executeSearch() {
-                const q = document.getElementById('v-search').value;
-                const resDiv = document.getElementById('v-results');
-                resDiv.innerHTML = '<p style="grid-column:1/-1; text-align:center; opacity:0.5;">Accessing JikanJS Engine...</p>';
+            let currentTab = 'current';
+
+            async function loadTab(type, el) {
+                // UI Toggle
+                document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+                if(el) el.classList.add('active');
                 
-                const r = await fetch('/api/vantage-search?q=' + q);
-                const items = await r.json();
+                const content = document.getElementById('v-content');
+                content.innerHTML = '<p style="grid-column:1/-1; text-align:center; opacity:0.5;">UPLINKING TO MAL ARCHIVES...</p>';
                 
-                resDiv.innerHTML = items.map(i => \`
-                    <div class="v-card">
-                        <img src="\${i.poster}" onclick="location.href='/anime-detail/\${i.id}'">
-                        <div style="padding:10px; font-size:12px; font-weight:bold; height:35px; overflow:hidden; text-align:center;">\${i.title}</div>
-                        <div class="sync-tray">
-                            <button class="btn-s btn-sync" onclick="quickSave('\${i.id}', '\${encodeURIComponent(i.title)}', '\${encodeURIComponent(i.poster)}', 'watching', \${i.total})">SYNC</button>
-                            <button class="btn-s btn-plan" onclick="quickSave('\${i.id}', '\${encodeURIComponent(i.title)}', '\${encodeURIComponent(i.poster)}', 'planned', \${i.total})">PLAN</button>
+                const res = await fetch(\`/api/vantage-data?type=\${type}\`);
+                const data = await res.json();
+                renderCards(data);
+            }
+
+            async function searchMode() {
+                const q = document.getElementById('master-search').value;
+                const content = document.getElementById('v-content');
+                content.innerHTML = '<p style="grid-column:1/-1; text-align:center; opacity:0.5;">SCANNING...</p>';
+                const res = await fetch(\`/api/vantage-search?q=\${q}\`);
+                const data = await res.json();
+                renderCards(data);
+            }
+
+            function renderCards(items) {
+                const content = document.getElementById('v-content');
+                content.innerHTML = items.map(i => \`
+                    <div class="v-card" onclick="location.href='/anime-detail/\${i.id}'">
+                        \${i.score ? \`<div class="score-badge">\${i.score}</div>\` : ''}
+                        <img src="\${i.poster}" loading="lazy">
+                        <div class="v-info">
+                            <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">\${i.title}</div>
                         </div>
                     </div>
                 \`).join('');
             }
 
-            async function quickSave(id, title, poster, status, total) {
-                await fetch(\`/save?id=\${id}&title=\${title}&poster=\${poster}&type=anime&source=mal&status=\${status}&total=\${total}\`);
-                alert(status === 'watching' ? 'Synced to Vault' : 'Added to Plan');
-            }
+            // Initial Load
+            loadTab('current');
         </script>
     </body>
     </html>
     `);
 });
+
+app.get('/api/vantage-data', async (req, res) => {
+    const { type, year, season } = req.query;
+    const cacheKey = `v_cache_${type}_${year || 'now'}_${season || 'now'}`;
+    
+    // Check Cache first to save Jikan Rate Limits
+    const cached = myCache.get(cacheKey);
+    if (cached) return res.json(cached);
+
+    try {
+        let rawData;
+        if (type === 'top') {
+            rawData = await jikanjs.loadTop('anime');
+        } else if (type === 'schedule') {
+            const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+            rawData = await jikanjs.loadSchedule(days[new Date().getDay()]);
+        } else if (type === 'archive') {
+            // If user didn't provide year/season, default to a classic "CD Era" year
+            rawData = await jikanjs.loadSeason(year || 1998, season || 'fall');
+        } else {
+            rawData = await jikanjs.loadCurrentSeason();
+        }
+
+        const mapped = rawData.data.map(a => ({
+            id: a.mal_id,
+            title: a.title_english || a.title,
+            poster: a.images?.jpg?.large_image_url || a.images?.jpg?.image_url,
+            score: a.score || '??'
+        }));
+
+        myCache.set(cacheKey, mapped); // Store for 1 hour
+        res.json(mapped);
+    } catch (e) {
+        console.error("Vantage OS Uplink Error:", e);
+        res.status(429).json({ error: "System Throttled. Retrying uplink..." });
+    }
+});
+
+
+// Helper: System Stall (Micro-Delay to prevent 429 errors)
+const stall = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 app.get('/anime-detail/:id', async (req, res) => {
     const malId = req.params.id;
@@ -139,27 +216,38 @@ app.get('/anime-detail/:id', async (req, res) => {
 
     if (!data) {
         try {
-            const [main, chars, recs] = await Promise.all([
-                jikanjs.loadAnime(malId, 'full'),
-                jikanjs.loadAnime(malId, 'characters'),
-                jikanjs.loadAnime(malId, 'recommendations')
-            ]);
+            // SEQUENTIAL UPLINK: We fetch one by one with 350ms gaps
+            // This respects the 3-requests-per-second limit perfectly.
+            const main = await jikanjs.loadAnime(malId, 'full');
+            await stall(350); 
+            
+            const chars = await jikanjs.loadAnime(malId, 'characters');
+            await stall(350);
+            
+            const recs = await jikanjs.loadAnime(malId, 'recommendations');
             
             data = { 
                 ...main.data, 
-                characters: chars.data.slice(0, 6),
-                recommendations: recs.data.slice(0, 5)
+                characters: chars.data?.slice(0, 6) || [],
+                recommendations: recs.data?.slice(0, 5) || []
             };
+            
             myCache.set(cacheKey, data);
         } catch (error) {
-            return res.status(404).send("Intelligence Core: Subject Not Found");
+            console.error("Uplink Error:", error.message);
+            // If it's a 429, we tell the user the system is throttled
+            const errorMsg = error.response?.status === 429 
+                ? "Intelligence Core: Rate Limit Exceeded. Please slow down." 
+                : "Intelligence Core: Subject Not Found";
+            return res.status(error.response?.status || 404).send(errorMsg);
         }
     }
 
     res.send(`
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
     <head>
+        <meta charset="UTF-8">
         <style>
             body { background: #000; color: white; font-family: 'Inter', sans-serif; margin:0; }
             .hero { height: 45vh; width:100%; position:relative; display:flex; align-items:flex-end; padding: 40px; box-sizing:border-box; }
@@ -167,10 +255,11 @@ app.get('/anime-detail/:id', async (req, res) => {
             .content { max-width: 1100px; margin: -120px auto 50px; padding: 0 20px; display: flex; gap: 40px; }
             .poster { width: 300px; border-radius: 20px; box-shadow: 0 30px 60px rgba(0,0,0,1); border: 1px solid rgba(255,255,255,0.1); }
             .right-panel { flex: 1; margin-top: 140px; }
-            .t-btn { background: #ff0000; color: white; padding: 14px 28px; border-radius: 50px; text-decoration: none; font-weight: 900; display: inline-flex; align-items: center; gap: 10px; margin-top: 20px; box-shadow: 0 0 20px rgba(255,0,0,0.3); }
+            .t-btn { background: #ff0000; color: white; padding: 14px 28px; border-radius: 50px; text-decoration: none; font-weight: 900; display: inline-flex; align-items: center; gap: 10px; margin-top: 20px; box-shadow: 0 0 20px rgba(255,0,0,0.3); transition: 0.3s; }
+            .t-btn:hover { transform: scale(1.05); background: #cc0000; }
             .char-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 15px; margin-top: 30px; }
             .char-card { text-align: center; }
-            .char-card img { width: 100%; aspect-ratio: 1/1; object-fit: cover; border-radius: 50%; border: 2px solid #222; }
+            .char-card img { width: 100%; aspect-ratio: 1/1; object-fit: cover; border-radius: 50%; border: 2px solid #222; background: #111; }
             .char-card p { font-size: 10px; margin-top: 8px; opacity: 0.6; }
             .rec-tag { background: rgba(0,212,255,0.1); color: #00d4ff; padding: 5px 10px; border-radius: 5px; font-size: 11px; margin: 5px; display: inline-block; border: 1px solid #00d4ff; }
             @media (max-width: 800px) { .content { flex-direction: column; align-items: center; text-align: center; } .right-panel { margin-top: 20px; } }
@@ -178,12 +267,12 @@ app.get('/anime-detail/:id', async (req, res) => {
     </head>
     <body>
         <div class="hero">
-            <img src="${data.images.jpg.large_image_url}" class="hero-bg">
+            <img src="${data.images?.jpg?.large_image_url || ''}" class="hero-bg">
             <h1 style="font-size: clamp(24px, 5vw, 48px); margin:0; text-shadow: 0 10px 30px rgba(0,0,0,1);">${data.title}</h1>
         </div>
 
         <div class="content">
-            <img src="${data.images.jpg.large_image_url}" class="poster">
+            <img src="${data.images?.jpg?.large_image_url || ''}" class="poster">
             <div class="right-panel">
                 <div style="margin-bottom: 20px;">
                     <span class="rec-tag">${data.source || 'N/A'}</span>
@@ -191,15 +280,15 @@ app.get('/anime-detail/:id', async (req, res) => {
                     <span class="rec-tag">RANK: #${data.rank || 'Unranked'}</span>
                 </div>
 
-                <p style="opacity:0.8; line-height:1.8; font-size: 15px;">${data.synopsis}</p>
+                <p style="opacity:0.8; line-height:1.8; font-size: 15px;">${data.synopsis || 'No intelligence briefing available.'}</p>
                 ${data.trailer?.url ? `<a href="${data.trailer.url}" target="_blank" class="t-btn">WATCH TRAILER</a>` : ''}
                 
                 <h3 style="margin-top:50px; font-size:12px; letter-spacing:3px; opacity:0.4;">CAST_DIRECTIVE</h3>
                 <div class="char-grid">
                     ${data.characters.map(c => `
                         <div class="char-card">
-                            <img src="${c.character.images.jpg.image_url}">
-                            <p>${c.character.name.split(',')[0]}</p>
+                            <img src="${c.character.images?.jpg?.image_url || 'https://via.placeholder.com/100?text=No+Image'}">
+                            <p>${c.character.name ? c.character.name.split(',')[0] : 'Unknown'}</p>
                         </div>
                     `).join('')}
                 </div>
@@ -207,9 +296,9 @@ app.get('/anime-detail/:id', async (req, res) => {
                 <h3 style="margin-top:30px; font-size:12px; letter-spacing:2px; color:#00d4ff;">SIMILAR INTELLIGENCE</h3>
                 <div style="display:flex; flex-wrap:wrap;">
                     ${data.recommendations.map(r => `
-                        <div onclick="location.href='/anime-detail/${r.entry.mal_id}'" style="cursor:pointer; margin-right:10px; text-align:center; width:80px;">
-                            <img src="${r.entry.images.jpg.image_url}" style="width:100%; border-radius:5px;">
-                            <p style="font-size:9px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;">${r.entry.title}</p>
+                        <div onclick="location.href='/anime-detail/${r.entry.mal_id}'" style="cursor:pointer; margin-right:10px; text-align:center; width:80px; margin-bottom:15px;">
+                            <img src="${r.entry.images?.jpg?.image_url || ''}" style="width:100%; border-radius:5px; border: 1px solid #333;">
+                            <p style="font-size:9px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; margin-top:5px;">${r.entry.title}</p>
                         </div>
                     `).join('')}
                 </div>
@@ -219,7 +308,6 @@ app.get('/anime-detail/:id', async (req, res) => {
     </html>
     `);
 });
-
 
 
 // --- MONGODB CONNECTION ---
