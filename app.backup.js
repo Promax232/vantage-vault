@@ -1,16 +1,269 @@
 const express = require('express');
 const axios = require('axios');
-const mongoose = require('mongoose'); 
+const mongoose = require('mongoose');
 const Groq = require("groq-sdk");
-const path = require('path'); 
+const cpath = require('path');
+const NodeCache = require('node-cache');
+const jikanjs = require('@mateoaranda/jikanjs');
 require('dotenv').config();
 const app = express();
+const myCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 });
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.TMDB_KEY;
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
-const BRAVE_KEY = process.env.BRAVE_API_KEY; 
+const BRAVE_KEY = process.env.BRAVE_API_KEY;
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const SIMKL_CLIENT_ID = process.env.SIMKL_CLIENT_ID;
+function getSeasonProgress() {
+    const now = new Date();
+    const month = now.getMonth(); // 0-11
+    const day = now.getDate();
+    const year = now.getFullYear();
+    // Define Season Windows
+    // Winter: Jan-Mar | Spring: Apr-Jun | Summer: Jul-Sep | Fall: Oct-Dec
+    const seasons = [
+        { name: "WINTER", start: 0 }, { name: "SPRING", start: 3 },
+        { name: "SUMMER", start: 6 }, { name: "FALL", start: 9 }
+    ];
+    const currentSeason = seasons.reverse().find(s => month >= s.start) || seasons[0];
+    const nextSeasonName = currentSeason.name === "FALL" ? "WINTER" : seasons[seasons.findIndex(s => s.name === currentSeason.name) + 1].name;
+    // Calculate progress within the 3-month window
+    const seasonStartMonth = currentSeason.start;
+    const totalDaysInSeason = 91; // Rough average
+    const daysPassed = ((month - seasonStartMonth) * 30) + day;
+    const percent = Math.min(99, Math.round((daysPassed / totalDaysInSeason) * 100));
+    return { name: currentSeason.name, percent, next: nextSeasonName, year };
+}
 app.use(express.json());
+// NEW: Global Search API using jikanjs
+app.get('/api/vantage-search', async (req, res) => {
+    try {
+        const results = await jikanjs.search('anime', req.query.q, 12);
+        const mapped = results.data.map(a => ({
+            id: a.mal_id,
+            title: a.title_english || a.title,
+            poster: a.images.jpg.large_image_url,
+            total: a.episodes || 0
+        }));
+        res.json(mapped);
+    } catch (e) {
+        res.status(500).json({ error: "Uplink Failure" });
+    }
+});
+app.get('/vantage', async (req, res) => {
+    const sp = getSeasonProgress();
+    res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>VANTAGE OS // INTELLIGENCE</title>
+        <style>
+            :root { --accent: #00d4ff; --bg: #050505; --glass: rgba(255,255,255,0.03); --border: rgba(255,255,255,0.08); }
+            body { background: var(--bg); color: white; font-family: 'Inter', sans-serif; margin: 0; overflow-x: hidden; }
+            /* Apple-Style Navigation */
+            .os-nav { display: flex; gap: 20px; padding: 20px; border-bottom: 1px solid var(--border); overflow-x: auto; sticky: top; background: rgba(5,5,5,0.8); backdrop-filter: blur(20px); z-index: 100; }
+            .nav-item { opacity: 0.5; cursor: pointer; font-size: 11px; font-weight: 800; letter-spacing: 2px; white-space: nowrap; transition: 0.3s; }
+            .nav-item.active { opacity: 1; color: var(--accent); border-bottom: 1px solid var(--accent); }
+            .dashboard { padding: 30px; max-width: 1400px; margin: auto; }
+            /* Season Progress Card */
+            .hud-card { background: var(--glass); border: 1px solid var(--border); border-radius: 20px; padding: 25px; margin-bottom: 30px; position: relative; overflow: hidden; }
+            .bar-bg { width: 100%; height: 4px; background: #111; border-radius: 10px; margin-top: 15px; }
+            .bar-fill { width: ${sp.percent}%; height: 100%; background: var(--accent); box-shadow: 0 0 15px var(--accent); }
+            /* Grid Layout */
+            .v-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 25px; }
+            .v-card { position: relative; border-radius: 12px; overflow: hidden; background: #111; transition: transform 0.4s cubic-bezier(0.165, 0.84, 0.44, 1); border: 1px solid transparent; }
+            .v-card:hover { transform: scale(1.05); border-color: var(--accent); }
+            .v-card img { width: 100%; aspect-ratio: 2/3; object-fit: cover; }
+            .v-info { padding: 12px; font-size: 12px; font-weight: 600; background: linear-gradient(transparent, rgba(0,0,0,0.9)); position: absolute; bottom: 0; width: 100%; box-sizing: border-box; }
+            .score-badge { position: absolute; top: 10px; right: 10px; background: var(--accent); color: black; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 900; }
+            /* Controls */
+            .search-box { width: 100%; background: #111; border: 1px solid #222; padding: 15px 25px; border-radius: 50px; color: white; margin-bottom: 30px; outline: none; transition: 0.3s; }
+            .search-box:focus { border-color: var(--accent); box-shadow: 0 0 20px rgba(0,212,255,0.1); }
+            @media (max-width: 600px) { .v-grid { grid-template-columns: repeat(2, 1fr); gap: 15px; } }
+        </style>
+    </head>
+    <body>
+        <nav class="os-nav">
+            <div class="nav-item active" onclick="loadTab('current', this)">CURRENT SEASON</div>
+            <div class="nav-item" onclick="loadTab('top', this)">HALL OF FAME</div>
+            <div class="nav-item" onclick="loadTab('schedule', this)">CHRONO-SYNC</div>
+            <div class="nav-item" onclick="loadTab('archive', this)">DEEP ARCHIVE</div>
+        </nav>
+        <div class="dashboard">
+            <div id="dynamic-header">
+                <div class="hud-card">
+                    <h2 style="margin:0; letter-spacing:-1px;">${sp.name} ${sp.year} <span style="opacity:0.3; font-weight:300;">OS INTERFACE</span></h2>
+                    <div class="bar-bg"><div class="bar-fill"></div></div>
+                    <p style="font-size:9px; opacity:0.4; margin-top:10px;">SYSTEM STATUS: NOMINAL // JIKAN_V4 ACTIVE</p>
+                </div>
+            </div>
+            <input type="text" id="master-search" class="search-box" placeholder="Search Global Archives..." onkeyup="if(event.key==='Enter') searchMode()">
+            <div id="v-content" class="v-grid">
+                </div>
+        </div>
+        <script>
+            let currentTab = 'current';
+            async function loadTab(type, el) {
+                // UI Toggle
+                document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+                if(el) el.classList.add('active');
+                const content = document.getElementById('v-content');
+                content.innerHTML = '<p style="grid-column:1/-1; text-align:center; opacity:0.5;">UPLINKING TO MAL ARCHIVES...</p>';
+                const res = await fetch(\`/api/vantage-data?type=\${type}\`);
+                const data = await res.json();
+                renderCards(data);
+            }
+            async function searchMode() {
+                const q = document.getElementById('master-search').value;
+                const content = document.getElementById('v-content');
+                content.innerHTML = '<p style="grid-column:1/-1; text-align:center; opacity:0.5;">SCANNING...</p>';
+                const res = await fetch(\`/api/vantage-search?q=\${q}\`);
+                const data = await res.json();
+                renderCards(data);
+            }
+            function renderCards(items) {
+                const content = document.getElementById('v-content');
+                content.innerHTML = items.map(i => \`
+                    <div class="v-card" onclick="location.href='/anime-detail/\${i.id}'">
+                        \${i.score ? \`<div class="score-badge">\${i.score}</div>\` : ''}
+                        <img src="\${i.poster}" loading="lazy">
+                        <div class="v-info">
+                            <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">\${i.title}</div>
+                        </div>
+                    </div>
+                \`).join('');
+            }
+            // Initial Load
+            loadTab('current');
+        </script>
+    </body>
+    </html>
+    `);
+});
+app.get('/api/vantage-data', async (req, res) => {
+    const { type, year, season } = req.query;
+    const cacheKey = `v_cache_${type}_${year || 'now'}_${season || 'now'}`;
+    // Check Cache first to save Jikan Rate Limits
+    const cached = myCache.get(cacheKey);
+    if (cached) return res.json(cached);
+    try {
+        let rawData;
+        if (type === 'top') {
+            rawData = await jikanjs.loadTop('anime');
+        } else if (type === 'schedule') {
+            const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+            rawData = await jikanjs.loadSchedule(days[new Date().getDay()]);
+        } else if (type === 'archive') {
+            // If user didn't provide year/season, default to a classic "CD Era" year
+            rawData = await jikanjs.loadSeason(year || 1998, season || 'fall');
+        } else {
+            rawData = await jikanjs.loadCurrentSeason();
+        }
+        const mapped = rawData.data.map(a => ({
+            id: a.mal_id,
+            title: a.title_english || a.title,
+            poster: a.images?.jpg?.large_image_url || a.images?.jpg?.image_url,
+            score: a.score || '??'
+        }));
+        myCache.set(cacheKey, mapped); // Store for 1 hour
+        res.json(mapped);
+    } catch (e) {
+        console.error("Vantage OS Uplink Error:", e);
+        res.status(429).json({ error: "System Throttled. Retrying uplink..." });
+    }
+});
+// Helper: System Stall (Micro-Delay to prevent 429 errors)
+const stall = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+app.get('/anime-detail/:id', async (req, res) => {
+    const malId = req.params.id;
+    const cacheKey = `v_full_intel_${malId}`;
+    let data = myCache.get(cacheKey);
+    if (!data) {
+        try {
+            // SEQUENTIAL UPLINK: We fetch one by one with 350ms gaps
+            // This respects the 3-requests-per-second limit perfectly.
+            const main = await jikanjs.loadAnime(malId, 'full');
+            await stall(350);
+            const chars = await jikanjs.loadAnime(malId, 'characters');
+            await stall(350);
+            const recs = await jikanjs.loadAnime(malId, 'recommendations');
+            data = {
+                ...main.data,
+                characters: chars.data?.slice(0, 6) || [],
+                recommendations: recs.data?.slice(0, 5) || []
+            };
+            myCache.set(cacheKey, data);
+        } catch (error) {
+            console.error("Uplink Error:", error.message);
+            // If it's a 429, we tell the user the system is throttled
+            const errorMsg = error.response?.status === 429
+                ? "Intelligence Core: Rate Limit Exceeded. Please slow down."
+                : "Intelligence Core: Subject Not Found";
+            return res.status(error.response?.status || 404).send(errorMsg);
+        }
+    }
+    res.send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            body { background: #000; color: white; font-family: 'Inter', sans-serif; margin:0; }
+            .hero { height: 45vh; width:100%; position:relative; display:flex; align-items:flex-end; padding: 40px; box-sizing:border-box; }
+            .hero-bg { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; filter:blur(40px) brightness(0.2); z-index:-1; }
+            .content { max-width: 1100px; margin: -120px auto 50px; padding: 0 20px; display: flex; gap: 40px; }
+            .poster { width: 300px; border-radius: 20px; box-shadow: 0 30px 60px rgba(0,0,0,1); border: 1px solid rgba(255,255,255,0.1); }
+            .right-panel { flex: 1; margin-top: 140px; }
+            .t-btn { background: #ff0000; color: white; padding: 14px 28px; border-radius: 50px; text-decoration: none; font-weight: 900; display: inline-flex; align-items: center; gap: 10px; margin-top: 20px; box-shadow: 0 0 20px rgba(255,0,0,0.3); transition: 0.3s; }
+            .t-btn:hover { transform: scale(1.05); background: #cc0000; }
+            .char-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 15px; margin-top: 30px; }
+            .char-card { text-align: center; }
+            .char-card img { width: 100%; aspect-ratio: 1/1; object-fit: cover; border-radius: 50%; border: 2px solid #222; background: #111; }
+            .char-card p { font-size: 10px; margin-top: 8px; opacity: 0.6; }
+            .rec-tag { background: rgba(0,212,255,0.1); color: #00d4ff; padding: 5px 10px; border-radius: 5px; font-size: 11px; margin: 5px; display: inline-block; border: 1px solid #00d4ff; }
+            @media (max-width: 800px) { .content { flex-direction: column; align-items: center; text-align: center; } .right-panel { margin-top: 20px; } }
+        </style>
+    </head>
+    <body>
+        <div class="hero">
+            <img src="${data.images?.jpg?.large_image_url || ''}" class="hero-bg">
+            <h1 style="font-size: clamp(24px, 5vw, 48px); margin:0; text-shadow: 0 10px 30px rgba(0,0,0,1);">${data.title}</h1>
+        </div>
+        <div class="content">
+            <img src="${data.images?.jpg?.large_image_url || ''}" class="poster">
+            <div class="right-panel">
+                <div style="margin-bottom: 20px;">
+                    <span class="rec-tag">${data.source || 'N/A'}</span>
+                    <span class="rec-tag">${data.studios?.map(s => s.name).join(', ') || 'Independent'}</span>
+                    <span class="rec-tag">RANK: #${data.rank || 'Unranked'}</span>
+                </div>
+                <p style="opacity:0.8; line-height:1.8; font-size: 15px;">${data.synopsis || 'No intelligence briefing available.'}</p>
+                ${data.trailer?.url ? `<a href="${data.trailer.url}" target="_blank" class="t-btn">WATCH TRAILER</a>` : ''}
+                <h3 style="margin-top:50px; font-size:12px; letter-spacing:3px; opacity:0.4;">CAST_DIRECTIVE</h3>
+                <div class="char-grid">
+                    ${data.characters.map(c => `
+                        <div class="char-card">
+                            <img src="${c.character.images?.jpg?.image_url || 'https://via.placeholder.com/100?text=No+Image'}">
+                            <p>${c.character.name ? c.character.name.split(',')[0] : 'Unknown'}</p>
+                        </div>
+                    `).join('')}
+                </div>
+                <h3 style="margin-top:30px; font-size:12px; letter-spacing:2px; color:#00d4ff;">SIMILAR INTELLIGENCE</h3>
+                <div style="display:flex; flex-wrap:wrap;">
+                    ${data.recommendations.map(r => `
+                        <div onclick="location.href='/anime-detail/${r.entry.mal_id}'" style="cursor:pointer; margin-right:10px; text-align:center; width:80px; margin-bottom:15px;">
+                            <img src="${r.entry.images?.jpg?.image_url || ''}" style="width:100%; border-radius:5px; border: 1px solid #333;">
+                            <p style="font-size:9px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; margin-top:5px;">${r.entry.title}</p>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    `);
+});
 // --- MONGODB CONNECTION ---
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log("Vault Uplink Established (MongoDB)"))
@@ -141,13 +394,11 @@ const NAV_COMPONENT = `
 <div id="overlay" class="overlay" onclick="toggleNav()"></div>
 <div id="sidebar" class="sidebar">
     <h2 style="color:var(--accent); font-size:12px; margin-bottom:50px; letter-spacing:4px; font-weight:900;">VANTAGE <span style="color:white; opacity:0.5;">HUD</span></h2>
-    
     <a href="/watchlist" class="nav-link"><span class="nav-icon">⦿</span> ACTIVE SYNC</a>
     <a href="/plan-to-watch" class="nav-link"><span class="nav-icon">🔖</span> PLAN TO WATCH</a>
     <a href="/hall-of-fame" class="nav-link"><span class="nav-icon">🏆</span> HALL OF FAME</a>
-    <a href="/chrono-sync" class="nav-link"><span class="nav-icon">⏳</span> CHRONO-SYNC</a>
+<a href="/vantage" class="nav-link"><span class="nav-icon">⏳</span> VANTAGE OS</a>
     <a href="/intelligence-core" class="nav-link"><span class="nav-icon">🧠</span> INTELLIGENCE CORE</a>
-
     <div style="margin-top:auto; padding:20px; background:rgba(255,255,255,0.03); border-radius:15px; border:1px solid var(--border);">
         <div style="font-size:10px; color:var(--accent); letter-spacing:1px; margin-bottom:5px;">● SYSTEM ONLINE</div>
         <div style="font-size:9px; color:#8b949e; opacity:0.6;">PHASE 5: INTELLIGENCE CORE ACTIVE</div>
@@ -258,108 +509,6 @@ app.get('/watchlist', async (req, res) => {
         </script>
     </body></html>`);
 });
-// --- CALIBRATED CHRONO-SYNC (LIVE CALENDAR LOGIC) ---
-app.get('/chrono-sync', async (req, res) => {
-    const list = await getWatchlist();
-    const active = list.filter(s => s.status === 'watching');
-    
-    const renderChronoRow = (s) => {
-        const start = s.startDate ? new Date(s.startDate) : new Date();
-        const now = new Date();
-        
-        // Calculate Seasonal Cycle (90-day window)
-        const diffDays = Math.max(1, Math.floor((now - start) / (1000 * 60 * 60 * 24)));
-        const cycleProgress = Math.min(100, Math.floor((diffDays / 90) * 100));
-        const epProgress = Math.min(100, Math.floor((s.currentEpisode / (s.totalEpisodes || 1)) * 100));
-
-        // Live Airing Calendar Logic
-        // Most shows air once every 7 days. We calculate based on the Start Date.
-        const daysSinceStart = Math.floor((now - start) / (1000 * 60 * 60 * 24));
-        const daysToNext = 7 - (daysSinceStart % 7);
-        const nextDate = new Date();
-        nextDate.setDate(now.getDate() + daysToNext);
-        
-        const isToday = daysToNext === 7 || daysToNext === 0;
-        const airStatus = isToday ? 
-            `<span style="color:var(--accent); font-weight:bold; animation: pulse 2s infinite;">● AIRING TODAY</span>` : 
-            `NEXT UPLINK: ${nextDate.toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric'})}`;
-
-        return `
-        <div class="glass chrono-row" style="margin-bottom:20px; border-left: 2px solid ${isToday ? 'var(--accent)' : 'var(--border)'};">
-            <div style="width:60px; height:85px; border-radius:10px; overflow:hidden; flex-shrink:0; border:1px solid var(--border);">
-                <img src="${s.poster.startsWith('http') ? s.poster : 'https://image.tmdb.org/t/p/w200'+s.poster}" style="width:100%; height:100%; object-fit:cover;">
-            </div>
-            <div style="flex:1;">
-                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">
-                    <div>
-                        <div style="font-size:15px; font-weight:800; letter-spacing:0.5px; color:white;">${s.title}</div>
-                        <div style="font-size:10px; color:var(--accent); margin-top:4px; font-family:monospace; letter-spacing:1px;">${airStatus}</div>
-                    </div>
-                    <div style="text-align:right;">
-                        <div style="font-size:10px; opacity:0.5;">EP ${s.currentEpisode} / ${s.totalEpisodes}</div>
-                    </div>
-                </div>
-                
-                <div style="display:flex; gap:10px; align-items:center;">
-                    <div class="chrono-timeline" style="height:6px; background:rgba(255,255,255,0.03);">
-                        <div class="chrono-progress" style="width:${epProgress}%; background:var(--accent);"></div>
-                    </div>
-                    <span style="font-size:9px; font-family:monospace; width:30px; opacity:0.6;">${epProgress}%</span>
-                </div>
-
-                <div style="display:flex; justify-content:space-between; margin-top:10px;">
-                     <div style="font-size:8px; opacity:0.4; letter-spacing:1px; text-transform:uppercase;">Tactical Window: ${cycleProgress}% of 90-Day Cycle</div>
-                     ${s.currentEpisode >= s.totalEpisodes ? '<span style="font-size:8px; color:var(--gold);">COMPLETION IMMINENT</span>' : ''}
-                </div>
-            </div>
-        </div>`;
-    };
-    res.send(`<html>
-        <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-            ${HUD_STYLE}
-            <style>
-                @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
-            </style>
-        </head>
-        <body>
-        ${NAV_COMPONENT}
-        <div style="padding:20px; max-width:800px; margin:auto; padding-top:80px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:40px;">
-                <div>
-                    <h1 style="font-size:24px; margin:0; font-weight:900;">CHRONO-<span class="accent-text">SYNC</span></h1>
-                    <p style="opacity:0.5; font-size:11px; letter-spacing:1px;">LIVE AIRING CALENDAR & CYCLE TRACKER</p>
-                </div>
-                <div class="glass" style="padding:10px 15px; text-align:right;">
-                    <div style="font-size:9px; opacity:0.6;">CURRENT_STARDATE</div>
-                    <div style="font-size:12px; font-weight:bold; color:var(--accent);">${new Date().toLocaleDateString('en-US', {month: 'long', day: 'numeric', year: 'numeric'})}</div>
-                </div>
-            </div>
-            <div>
-                ${active.map(s => renderChronoRow(s)).join('')}
-                ${active.length === 0 ? '<div style="text-align:center; padding:100px; opacity:0.3; border:1px dashed var(--border); border-radius:20px;">No Active Timelines. Sync a show to begin tracking.</div>' : ''}
-            </div>
-        </div>
-    </body></html>`);
-});
-
-    res.send(`<html>
-        <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-            ${HUD_STYLE}
-        </head>
-        <body>
-        ${NAV_COMPONENT}
-        <div style="padding:20px; max-width:1000px; margin:auto; padding-top:80px;">
-            <h1 style="font-size:24px; margin:0 0 10px 0; font-weight:900;">CHRONO-<span class="accent-text">SYNC</span></h1>
-            <p style="opacity:0.5; font-size:12px; margin-bottom:40px;">3-MONTH SEASONAL TACTICAL VIEW</p>
-            <div>
-                ${active.map(s => renderChronoRow(s)).join('')}
-                ${active.length === 0 ? '<div style="text-align:center; padding:100px; opacity:0.3;">No Active Timelines.</div>' : ''}
-            </div>
-        </div>
-    </body></html>`);
-
 // --- NEW PAGE: PLAN TO WATCH ---
 app.get('/plan-to-watch', async (req, res) => {
     const list = await getWatchlist();
@@ -523,20 +672,16 @@ app.get('/show/:type/:id', async (req, res) => {
         </script>
     </body></html>`);
 });
-
 // --- NEW PAGE: INTELLIGENCE CORE (STATS & AI) ---
 app.get('/intelligence-core', async (req, res) => {
     const list = await getWatchlist();
     const completed = list.filter(s => s.status === 'completed');
     const watching = list.filter(s => s.status === 'watching');
-
     // Stats Logic
-    const avgRating = completed.length > 0 
-        ? (completed.reduce((acc, s) => acc + (s.personalRating || 0), 0) / completed.length).toFixed(1) 
+    const avgRating = completed.length > 0
+        ? (completed.reduce((acc, s) => acc + (s.personalRating || 0), 0) / completed.length).toFixed(1)
         : "N/A";
-    
     const totalEps = list.reduce((acc, s) => acc + (s.currentEpisode || 0), 0);
-
     // AI Recommendation Engine
     let aiRecs = "Initiating Analysis...";
     try {
@@ -550,7 +695,6 @@ app.get('/intelligence-core', async (req, res) => {
         });
         aiRecs = completion.choices[0].message.content.replace(/\n/g, '<br>');
     } catch (e) { aiRecs = "AI Uplink Interrupted."; }
-
     res.send(`<html>
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -560,7 +704,6 @@ app.get('/intelligence-core', async (req, res) => {
         ${NAV_COMPONENT}
         <div style="padding:20px; max-width:1000px; margin:auto; padding-top:80px;">
             <h1 style="font-size:24px; margin:0 0 10px 0; font-weight:900;">INTELLIGENCE <span class="accent-text">CORE</span></h1>
-            
             <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:20px; margin-bottom:40px;">
                 <div class="glass" style="padding:20px; text-align:center;">
                     <div style="font-size:10px; opacity:0.5; letter-spacing:2px;">AVG_RATING</div>
@@ -575,7 +718,6 @@ app.get('/intelligence-core', async (req, res) => {
                     <div style="font-size:32px; font-weight:900;">${watching.length}</div>
                 </div>
             </div>
-
             <div class="glass" style="padding:30px; border-left:4px solid var(--accent); position:relative; overflow:hidden;">
                 <div style="position:absolute; top:-10px; right:-10px; font-size:100px; opacity:0.03; font-weight:900;">AI</div>
                 <h2 style="font-size:14px; letter-spacing:3px; margin-bottom:20px; color:var(--accent);">● TACTICAL_RECOMMENDATIONS</h2>
@@ -586,7 +728,6 @@ app.get('/intelligence-core', async (req, res) => {
         </div>
     </body></html>`);
 });
-
 
 // --- API ROUTES (STABILIZED) ---
 app.get('/api/search', async (req, res) => {
@@ -604,22 +745,38 @@ app.get('/api/search', async (req, res) => {
         res.json({ mal: malResults, tmdb: tmdbResults });
     } catch (e) { res.json({ mal: [], tmdb: [] }); }
 });
+
+// FIXED: The /save route now contains the redirect logic properly
 app.get('/save', async (req, res) => {
     const { id, title, poster, type, source, total, status } = req.query;
-    await saveWatchlist({ 
-        id, title: decodeURIComponent(title), poster: decodeURIComponent(poster), 
-        type, source, currentEpisode: 0, totalEpisodes: parseInt(total) || 12, 
-        status: status || 'watching',
-        logs: {}, personalRating: 0, startDate: new Date().toISOString() 
-    });
-    res.redirect(status === 'planned' ? '/plan-to-watch' : '/watchlist');
+    try {
+        await Show.findOneAndUpdate(
+            { id: id }, 
+            { 
+                id, 
+                title: decodeURIComponent(title), 
+                poster: decodeURIComponent(poster), 
+                type, 
+                source, 
+                currentEpisode: 0, 
+                totalEpisodes: parseInt(total) || 12, 
+                status: status || 'watching',
+                startDate: new Date().toISOString() 
+            }, 
+            { upsert: true }
+        );
+        // This is where the redirect lives!
+        res.redirect(status === 'planned' ? '/plan-to-watch' : '/watchlist');
+    } catch (e) {
+        res.status(500).send("Vault Write Error");
+    }
 });
+
 app.get('/api/update/:id', async (req, res) => {
     const show = await Show.findOne({ id: req.params.id });
     if (show) {
         if (req.query.action === 'plus') {
             show.currentEpisode++;
-            // AUTO-ARCHIVE LOGIC: Move to Hall of Fame if finished
             if (show.currentEpisode >= show.totalEpisodes) {
                 show.status = 'completed';
             }
@@ -629,24 +786,28 @@ app.get('/api/update/:id', async (req, res) => {
         res.json({ success: true });
     } else { res.json({ success: false }); }
 });
+
 app.get('/api/update-status/:id', async (req, res) => {
     await Show.findOneAndUpdate({ id: req.params.id }, { status: req.query.status });
     res.json({ success: true });
 });
+
 app.post('/api/journal/:id', async (req, res) => {
     const show = await Show.findOne({ id: req.params.id });
     if (show) {
         if (!show.logs) show.logs = new Map();
         show.logs.set(req.body.ep.toString(), { text: req.body.text, date: new Date().toLocaleDateString() });
-        // Handle episode jumps from journal
         if (parseInt(req.body.ep) >= show.totalEpisodes) show.status = 'completed';
         await show.save();
     }
     res.json({ success: true });
 });
+
 app.get('/api/delete-show/:id', async (req, res) => {
     await Show.deleteOne({ id: req.params.id });
     res.redirect('/watchlist');
 });
+
 app.get('/', (req, res) => res.redirect('/watchlist'));
-app.listen(PORT, () => console.log(`🚀 VANTAGE ONLINE | PORT ${PORT}`));
+
+app.listen(PORT, () => console.log(`VANTAGE OS ONLINE ON PORT ${PORT}`));

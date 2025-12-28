@@ -1,5 +1,6 @@
 const express = require('express');
 const axios = require('axios');
+const { getSeasonProgress } = require('./utils/seasonUtils');
 const mongoose = require('mongoose');
 const Groq = require("groq-sdk");
 const cpath = require('path');
@@ -14,26 +15,7 @@ const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
 const BRAVE_KEY = process.env.BRAVE_API_KEY;
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const SIMKL_CLIENT_ID = process.env.SIMKL_CLIENT_ID;
-function getSeasonProgress() {
-    const now = new Date();
-    const month = now.getMonth(); // 0-11
-    const day = now.getDate();
-    const year = now.getFullYear();
-    // Define Season Windows
-    // Winter: Jan-Mar | Spring: Apr-Jun | Summer: Jul-Sep | Fall: Oct-Dec
-    const seasons = [
-        { name: "WINTER", start: 0 }, { name: "SPRING", start: 3 },
-        { name: "SUMMER", start: 6 }, { name: "FALL", start: 9 }
-    ];
-    const currentSeason = seasons.reverse().find(s => month >= s.start) || seasons[0];
-    const nextSeasonName = currentSeason.name === "FALL" ? "WINTER" : seasons[seasons.findIndex(s => s.name === currentSeason.name) + 1].name;
-    // Calculate progress within the 3-month window
-    const seasonStartMonth = currentSeason.start;
-    const totalDaysInSeason = 91; // Rough average
-    const daysPassed = ((month - seasonStartMonth) * 30) + day;
-    const percent = Math.min(99, Math.round((daysPassed / totalDaysInSeason) * 100));
-    return { name: currentSeason.name, percent, next: nextSeasonName, year };
-}
+
 app.use(express.json());
 // NEW: Global Search API using jikanjs
 app.get('/api/vantage-search', async (req, res) => {
