@@ -2,7 +2,8 @@ const express = require('express');
 const axios = require('axios');
 require('dotenv').config();
 const mongoose = require('mongoose');
-const { Show, getWatchlist, saveWatchlist } = require('./db');
+// Change this line:
+const { Show, getWatchlist, saveWatchlist } = require('./db/index');
 const { getSeasonProgress } = require('./utils/seasonUtils');
 const Groq = require("groq-sdk");
 const NodeCache = require('node-cache');

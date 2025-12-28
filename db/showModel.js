@@ -14,7 +14,8 @@ const showSchema = new mongoose.Schema({
   startDate: String
 });
 
-const Show = mongoose.model('Show', showSchema);
+// Replace your 'const Show = ...' line with this:
+const Show = mongoose.models.Show || mongoose.model('Show', showSchema);
 
 // Helper functions
 const getWatchlist = async () => {
