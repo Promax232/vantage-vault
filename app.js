@@ -1,12 +1,12 @@
 const express = require('express');
 const axios = require('axios');
 const { getSeasonProgress } = require('./utils/seasonUtils');
-const mongoose = require('mongoose');
 const Groq = require("groq-sdk");
+const { Show, getWatchlist, saveWatchlist } = require('./db');
 const cpath = require('path');
 const NodeCache = require('node-cache');
 const jikanjs = require('@mateoaranda/jikanjs');
-require('dotenv').config();
+
 const app = express();
 const myCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 });
 const PORT = process.env.PORT || 3000;
@@ -247,29 +247,7 @@ app.get('/anime-detail/:id', async (req, res) => {
     `);
 });
 // --- MONGODB CONNECTION ---
-mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log("Vault Uplink Established (MongoDB)"))
-    .catch(err => console.error("Vault Connection Error:", err));
-const showSchema = new mongoose.Schema({
-    id: String,
-    title: String,
-    poster: String,
-    type: String,
-    source: String,
-    currentEpisode: Number,
-    totalEpisodes: Number,
-    personalRating: Number,
-    status: { type: String, default: 'watching' }, // 'watching', 'planned', 'completed'
-    logs: { type: Map, of: Object, default: {} },
-    startDate: String
-});
-const Show = mongoose.model('Show', showSchema);
-const getWatchlist = async () => {
-    return await Show.find({});
-};
-const saveWatchlist = async (showData) => {
-    await Show.findOneAndUpdate({ id: showData.id }, showData, { upsert: true });
-};
+
 // --- ANDROID MANIFEST (DYNAMIC) ---
 app.get('/manifest.json', (req, res) => {
     res.json({
