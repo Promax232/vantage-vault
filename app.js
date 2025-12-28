@@ -2,7 +2,7 @@ const express = require('express');
 const axios = require('axios');
 require('dotenv').config();
 const mongoose = require('mongoose');
-// Change this line:
+// app.js
 const { Show, getWatchlist, saveWatchlist } = require('./db/index');
 const { getSeasonProgress } = require('./utils/seasonUtils');
 const Groq = require("groq-sdk");
