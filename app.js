@@ -36,6 +36,7 @@ app.use('/', require('./routes/pages/planToWatchPage'));
 app.use('/', require('./routes/pages/hallOfFamePage'));
 app.use('/', require('./routes/pages/showPage'));
 app.use('/', require('./routes/pages/intelligenceCorePage'));
+app.use('/', require('./routes/pages/vantagePage'));
 
 // --- API ROUTES ---
 app.use('/api/search', require('./routes/search'));
