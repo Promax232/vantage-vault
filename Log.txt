@@ -40,3 +40,17 @@ The Nervous System: Your Database (MongoDB) and AI (Groq) connections.
 
 
 I removed almost all title-specific checks. The code now thinks like an engineer: it looks at data types and statuses.(I J T GOD*23 Code Power Up)
+
+
+
+routes/
+├── api/
+│   ├── search.js
+│   ├── vantage.js
+│   └── watchlist.js
+├── pages/       <-- new folder
+│   ├── watchlist.page.js
+│   ├── planToWatch.page.js
+│   ├── hallOfFamepage.js
+│   ├── showPage.js
+│   └── intelligenceCorePage.js
