@@ -26,9 +26,6 @@ const saveWatchlist = async (showData) => {
   await Show.findOneAndUpdate({ id: showData.id }, showData, { upsert: true });
 };
 
-// db/index.js
-module.exports = {
-  Show,           // The Model
-  getWatchlist,   // The Function
-  saveWatchlist   // The Function
-};
+
+
+module.exports = { Show, getWatchlist, saveWatchlist };
