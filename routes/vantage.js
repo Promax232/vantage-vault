@@ -6,68 +6,19 @@ const axios = require('axios');
 const { getWatchlist } = require('../db');
 const Groq = require("groq-sdk");
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const { HUD_STYLE, NAV_COMPONENT } = require('../ui/layout'); // Add this!
 
 
 const myCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 });
 
 
-router.get('/api/vantage-search', async (req, res) => {
-    try {
-        const results = await jikanjs.search('anime', req.query.q, 12);
-        const mapped = results.data.map(a => ({
-            id: a.mal_id,
-            title: a.title_english || a.title,
-            poster: a.images.jpg.large_image_url,
-            total: a.episodes || 0
-        }));
-        res.json(mapped);
-    } catch (e) {
-        res.status(500).json({ error: "Uplink Failure" });
-    }
-});
-
-router.get('/vantage-data', async (req, res) => {
-    const { type, year, season } = req.query;
-    const cacheKey = `v_cache_${type}_${year || 'now'}_${season || 'now'}`;
-    // Check Cache first to save Jikan Rate Limits
-    const cached = myCache.get(cacheKey);
-    if (cached) return res.json(cached);
-    try {
-        let rawData;
-        if (type === 'top') {
-            rawData = await jikanjs.loadTop('anime');
-        } else if (type === 'schedule') {
-            const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-            rawData = await jikanjs.loadSchedule(days[new Date().getDay()]);
-        } else if (type === 'archive') {
-            // If user didn't provide year/season, default to a classic "CD Era" year
-            rawData = await jikanjs.loadSeason(year || 1998, season || 'fall');
-        } else {
-            rawData = await jikanjs.loadCurrentSeason();
-        }
-        const mapped = rawData.data.map(a => ({
-            id: a.mal_id,
-            title: a.title_english || a.title,
-            poster: a.images?.jpg?.large_image_url || a.images?.jpg?.image_url,
-            score: a.score || '??'
-        }));
-        myCache.set(cacheKey, mapped); // Store for 1 hour
-        res.json(mapped);
-    } catch (e) {
-        console.error("Vantage OS Uplink Error:", e);
-        res.status(429).json({ error: "System Throttled. Retrying uplink..." });
-    }
-});
-// Helper: System Stall (Micro-Delay to prevent 429 errors)
-const stall = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 router.get('/anime-detail/:id', async (req, res) => {
     const malId = req.params.id;
     const cacheKey = `v_full_intel_${malId}`;
     let data = myCache.get(cacheKey);
+    
     if (!data) {
         try {
-            // SEQUENTIAL UPLINK: We fetch one by one with 350ms gaps
-            // This respects the 3-requests-per-second limit perfectly.
             const main = await jikanjs.loadAnime(malId, 'full');
             await stall(350);
             const chars = await jikanjs.loadAnime(malId, 'characters');
@@ -76,75 +27,90 @@ router.get('/anime-detail/:id', async (req, res) => {
             data = {
                 ...main.data,
                 characters: chars.data?.slice(0, 6) || [],
-                recommendations: recs.data?.slice(0, 5) || []
+                recommendations: recs.data?.slice(0, 10) || []
             };
             myCache.set(cacheKey, data);
         } catch (error) {
-            console.error("Uplink Error:", error.message);
-            // If it's a 429, we tell the user the system is throttled
-            const errorMsg = error.response?.status === 429
-                ? "Intelligence Core: Rate Limit Exceeded. Please slow down."
-                : "Intelligence Core: Subject Not Found";
-            return res.status(error.response?.status || 404).send(errorMsg);
+            return res.status(404).send("Intelligence Core: Subject Not Found");
         }
     }
+
     res.send(`
     <!DOCTYPE html>
     <html lang="en">
     <head>
         <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        ${HUD_STYLE}
         <style>
-            body { background: #000; color: white; font-family: 'Inter', sans-serif; margin:0; }
-            .hero { height: 45vh; width:100%; position:relative; display:flex; align-items:flex-end; padding: 40px; box-sizing:border-box; }
-            .hero-bg { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:cover; filter:blur(40px) brightness(0.2); z-index:-1; }
-            .content { max-width: 1100px; margin: -120px auto 50px; padding: 0 20px; display: flex; gap: 40px; }
-            .poster { width: 300px; border-radius: 20px; box-shadow: 0 30px 60px rgba(0,0,0,1); border: 1px solid rgba(255,255,255,0.1); }
-            .right-panel { flex: 1; margin-top: 140px; }
-            .t-btn { background: #ff0000; color: white; padding: 14px 28px; border-radius: 50px; text-decoration: none; font-weight: 900; display: inline-flex; align-items: center; gap: 10px; margin-top: 20px; box-shadow: 0 0 20px rgba(255,0,0,0.3); transition: 0.3s; }
-            .t-btn:hover { transform: scale(1.05); background: #cc0000; }
-            .char-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 15px; margin-top: 30px; }
-            .char-card { text-align: center; }
-            .char-card img { width: 100%; aspect-ratio: 1/1; object-fit: cover; border-radius: 50%; border: 2px solid #222; background: #111; }
-            .char-card p { font-size: 10px; margin-top: 8px; opacity: 0.6; }
-            .rec-tag { background: rgba(0,212,255,0.1); color: #00d4ff; padding: 5px 10px; border-radius: 5px; font-size: 11px; margin: 5px; display: inline-block; border: 1px solid #00d4ff; }
-            @media (max-width: 800px) { .content { flex-direction: column; align-items: center; text-align: center; } .right-panel { margin-top: 20px; } }
+            .hero-section { position: relative; height: 50vh; overflow: hidden; display: flex; align-items: flex-end; padding: 40px; border-radius: 0 0 40px 40px; }
+            .hero-blur { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: url('\${data.images.jpg.large_image_url}') center/cover; filter: blur(60px) brightness(0.3); z-index: -1; }
+            .char-circle { width: 80px; height: 80px; border-radius: 50%; border: 2px solid var(--accent); object-fit: cover; transition: 0.3s; }
+            .char-circle:hover { transform: scale(1.1); box-shadow: 0 0 15px var(--accent); }
+            .rec-card { width: 120px; flex-shrink: 0; cursor: pointer; transition: 0.3s; }
+            .rec-card:hover { transform: translateY(-5px); }
         </style>
     </head>
     <body>
-        <div class="hero">
-            <img src="${data.images?.jpg?.large_image_url || ''}" class="hero-bg">
-            <h1 style="font-size: clamp(24px, 5vw, 48px); margin:0; text-shadow: 0 10px 30px rgba(0,0,0,1);">${data.title}</h1>
-        </div>
-        <div class="content">
-            <img src="${data.images?.jpg?.large_image_url || ''}" class="poster">
-            <div class="right-panel">
-                <div style="margin-bottom: 20px;">
-                    <span class="rec-tag">${data.source || 'N/A'}</span>
-                    <span class="rec-tag">${data.studios?.map(s => s.name).join(', ') || 'Independent'}</span>
-                    <span class="rec-tag">RANK: #${data.rank || 'Unranked'}</span>
-                </div>
-                <p style="opacity:0.8; line-height:1.8; font-size: 15px;">${data.synopsis || 'No intelligence briefing available.'}</p>
-                ${data.trailer?.url ? `<a href="${data.trailer.url}" target="_blank" class="t-btn">WATCH TRAILER</a>` : ''}
-                <h3 style="margin-top:50px; font-size:12px; letter-spacing:3px; opacity:0.4;">CAST_DIRECTIVE</h3>
-                <div class="char-grid">
-                    ${data.characters.map(c => `
-                        <div class="char-card">
-                            <img src="${c.character.images?.jpg?.image_url || 'https://via.placeholder.com/100?text=No+Image'}">
-                            <p>${c.character.name ? c.character.name.split(',')[0] : 'Unknown'}</p>
+        ${NAV_COMPONENT}
+        <div class="main-panel" style="padding: 0;">
+            <div class="hero-section">
+                <div class="hero-blur"></div>
+                <div style="display: flex; gap: 30px; align-items: center; flex-wrap: wrap;">
+                    <img src="\${data.images.jpg.large_image_url}" style="width: 200px; border-radius: 20px; box-shadow: 0 20px 50px rgba(0,0,0,0.8); border: 1px solid var(--border);">
+                    <div>
+                        <h1 class="accent-text" style="font-size: clamp(24px, 5vw, 48px); margin: 0;">\${data.title}</h1>
+                        <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                            <span class="glass" style="padding: 5px 15px; font-size: 10px; color: var(--gold);">★ \${data.score || 'N/A'}</span>
+                            <span class="glass" style="padding: 5px 15px; font-size: 10px;">\${data.year || 'Classic'}</span>
+                            <span class="glass" style="padding: 5px 15px; font-size: 10px; color: var(--accent);">\${data.status}</span>
                         </div>
-                    `).join('')}
+                    </div>
                 </div>
-                <h3 style="margin-top:30px; font-size:12px; letter-spacing:2px; color:#00d4ff;">SIMILAR INTELLIGENCE</h3>
-                <div style="display:flex; flex-wrap:wrap;">
-                    ${data.recommendations.map(r => `
-                        <div onclick="location.href='/anime-detail/${r.entry.mal_id}'" style="cursor:pointer; margin-right:10px; text-align:center; width:80px; margin-bottom:15px;">
-                            <img src="${r.entry.images?.jpg?.image_url || ''}" style="width:100%; border-radius:5px; border: 1px solid #333;">
-                            <p style="font-size:9px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; margin-top:5px;">${r.entry.title}</p>
+            </div>
+
+            <div style="padding: 40px;">
+                <div class="split-view" style="min-height: auto; gap: 40px;">
+                    <div style="flex: 2;">
+                        <h3 class="accent-text" style="letter-spacing: 2px; font-size: 12px;">// SYNOPSIS</h3>
+                        <p style="line-height: 1.8; opacity: 0.8; font-size: 15px;">\${data.synopsis}</p>
+                        
+                        <h3 class="accent-text" style="letter-spacing: 2px; font-size: 12px; margin-top: 40px;">// CAST_DIRECTIVE</h3>
+                        <div style="display: flex; gap: 20px; overflow-x: auto; padding-bottom: 20px;">
+                            \${data.characters.map(c => \`
+                                <div style="text-align: center; width: 80px;">
+                                    <img src="\${c.character.images.jpg.image_url}" class="char-circle">
+                                    <p style="font-size: 9px; margin-top: 8px; opacity: 0.6;">\${c.character.name.split(',')[0]}</p>
+                                </div>
+                            \`).join('')}
                         </div>
-                    `).join('')}
+                    </div>
+
+                    <div style="flex: 1;">
+                        <div class="glass" style="padding: 25px;">
+                            <h3 class="accent-text" style="font-size: 12px; margin-top: 0;">UPLINK ACTIONS</h3>
+                            <button class="btn" style="width: 100%; margin-bottom: 10px;" onclick="saveToVault('\${data.mal_id}', '\${encodeURIComponent(data.title)}', '\${encodeURIComponent(data.images.jpg.large_image_url)}')">ADD TO VAULT</button>
+                            \${data.trailer?.url ? \`<a href="\${data.trailer.url}" target="_blank" class="btn" style="display: block; text-align: center; text-decoration: none;">VIEW TRAILER</a>\` : ''}
+                        </div>
+                    </div>
+                </div>
+
+                <h3 class="accent-text" style="letter-spacing: 2px; font-size: 12px; margin-top: 50px;">// SIMILAR_INTELLIGENCE</h3>
+                <div style="display: flex; gap: 20px; overflow-x: auto; padding: 20px 0;">
+                    \${data.recommendations.map(r => \`
+                        <div class="rec-card" onclick="location.href='/api/anime-detail/\${r.entry.mal_id}'">
+                            <img src="\${r.entry.images.jpg.image_url}" style="width: 100%; border-radius: 10px; aspect-ratio: 2/3; object-fit: cover;">
+                            <p style="font-size: 10px; margin-top: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">\${r.entry.title}</p>
+                        </div>
+                    \`).join('')}
                 </div>
             </div>
         </div>
+        <script>
+            function saveToVault(id, title, poster) {
+                window.location.href = \`/api/watchlist/save?id=\${id}&title=\${title}&poster=\${poster}&type=anime&source=mal&total=12&status=planned\`;
+            }
+        </script>
     </body>
     </html>
     `);
