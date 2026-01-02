@@ -9,7 +9,7 @@ const Groq = require("groq-sdk");
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const myCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 });
 
-const { HUD_STYLE, NAV_COMPONENT } = require('../ui/layout');
+
 
 // ... (keep search and vantage-data routes exactly as they are)
 router.get('/api/vantage-search', async (req, res) => {
