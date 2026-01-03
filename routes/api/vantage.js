@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const NodeCache = require('node-cache');
 const axios = require('axios');
-const { HUD_STYLE, NAV_COMPONENT } = require('../ui/layout');
+const { HUD_STYLE } = require('../../ui/layout');
 const Groq = require("groq-sdk");
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 

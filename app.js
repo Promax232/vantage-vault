@@ -35,10 +35,11 @@ app.use('/', require('./routes/pages/showPage'));
 app.use('/', require('./routes/pages/intelligenceCorePage'));
 app.use('/', require('./routes/pages/vantagePage'));
 app.use('/', require('./routes/vantage'));
-// --- API ROUTES ---
-app.use('/api/search', require('./routes/search'));
-app.use('/api', require('./routes/vantage'));
-app.use('/api/watchlist', require('./routes/watchlist'));
+
+// --- API ROUTES (Pointing to the new subfolder) ---
+app.use('/api/search', require('./routes/api/search'));
+app.use('/api', require('./routes/api/vantage'));
+app.use('/api/watchlist', require('./routes/api/watchlist'));
 app.use('/api', require('./routes/api/vantageAI'));
 // --- Manifest ---
 app.get('/manifest.json', (req, res) => {
