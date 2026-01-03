@@ -34,7 +34,7 @@ app.use('/', require('./routes/pages/hallOfFamePage'));
 app.use('/', require('./routes/pages/showPage'));
 app.use('/', require('./routes/pages/intelligenceCorePage'));
 app.use('/', require('./routes/pages/vantagePage'));
-app.use('/', require('./routes/vantage'));
+
 
 // --- API ROUTES (Pointing to the new subfolder) ---
 app.use('/api/search', require('./routes/api/search'));
