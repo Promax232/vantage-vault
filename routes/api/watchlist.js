@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { Show } = require('../db');
+const { Show, getWatchlist, saveWatchlist } = require('../../db');
 
 
 router.get('/save', async (req, res) => {
