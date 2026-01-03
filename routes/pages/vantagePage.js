@@ -9,6 +9,7 @@ router.get('/vantage', (req, res) => {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <meta name="referrer" content="no-referrer"> 
             <title>Vantage OS | Intelligence HUD</title>
             ${HUD_STYLE}
             <style>
@@ -37,7 +38,8 @@ router.get('/vantage', (req, res) => {
                 <p style="color: #888; margin-bottom: 30px; font-size: 12px;">CONNECTED TO ANILIST GRAPHQL NODE</p>
                 
                 <div class="glass" style="padding: 15px; margin-bottom: 20px; display: flex; gap: 10px; overflow-x: auto;">
-                    <button class="btn" onclick="setMode('current')" id="btn-current">CURRENT SEASON</button>
+                    <button class="btn" onclick="setMode('current')" id="btn-current">SEASONAL</button>
+                    <button class="btn" onclick="setMode('airing')" id="btn-airing">AIRING TODAY</button> 
                     <button class="btn" onclick="setMode('top')" id="btn-top">TOP RATED</button>
                     <button class="btn" onclick="setMode('archive')" id="btn-archive">DEEP ARCHIVE</button>
                 </div>
@@ -71,7 +73,8 @@ router.get('/vantage', (req, res) => {
                     currentMode = mode;
                     // Reset Button States
                     document.querySelectorAll('.btn').forEach(b => b.style.opacity = '0.5');
-                    document.getElementById('btn-' + mode).style.opacity = '1';
+                    const activeBtn = document.getElementById('btn-' + mode);
+                    if(activeBtn) activeBtn.style.opacity = '1';
 
                     document.getElementById('archiveControls').style.display = (mode === 'archive') ? 'flex' : 'none';
                     engageUplink(mode);
@@ -89,6 +92,11 @@ router.get('/vantage', (req, res) => {
                         const res = await fetch(url);
                         const data = await res.json();
                         
+                        if (!data || data.length === 0) {
+                            grid.innerHTML = '<p style="color: #666;">No intelligence found for this sector.</p>';
+                            return;
+                        }
+
                         grid.innerHTML = data.map(show => \`
                             <div class="glass grid-card" style="padding: 10px; cursor: pointer; position: relative; overflow: hidden;" onclick="location.href='/api/anime-detail/\${show.id}'">
                                 
@@ -117,7 +125,6 @@ router.get('/vantage', (req, res) => {
                 }
 
                 async function saveToVault(id, title, poster) {
-                    // UPDATED: Now logs source as 'anilist'
                     window.location.href = \`/api/watchlist/save?id=\${id}&title=\${title}&poster=\${poster}&type=anime&source=anilist&total=12&status=planned\`;
                 }
 

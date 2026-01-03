@@ -46,40 +46,108 @@ router.get('/api/vantage-search', async (req, res) => {
 });
 
 // 2. VANTAGE DATA (Dashboard Feeds)
+// 2. VANTAGE DATA (Dashboard Feeds) - REVISED
 router.get('/vantage-data', async (req, res) => {
     const { type, year, season } = req.query;
-    const cacheKey = `v_ani_${type}_${year || 'now'}_${season || 'now'}`;
-    const cached = myCache.get(cacheKey);
-    if (cached) return res.json(cached);
-
+    
     let gqlQuery = '';
-    let variables = { perPage: 20 };
+    let variables = { perPage: 24 };
 
-    if (type === 'top') {
-        gqlQuery = `query { Page(perPage: 20) { media(sort: SCORE_DESC, type: ANIME) { id title { english romaji } coverImage { large color } averageScore } } }`;
-    } else if (type === 'archive') {
-        gqlQuery = `query ($year: Int, $season: Season) { Page(perPage: 20) { media(seasonYear: $year, season: $season, type: ANIME, sort: POPULARITY_DESC) { id title { english romaji } coverImage { large color } averageScore } } }`;
+    // MODE: AIRING TODAY (Next 24 Hours)
+    // FIX: Optimized query to get exactly what the HUD needs
+    if (type === 'airing') {
+        const start = Math.floor(Date.now() / 1000);
+        const end = start + 86400;
+        gqlQuery = `
+        query($start: Int, $end: Int) {
+            Page(perPage: 24) {
+                airingSchedules(airingAt_greater: $start, airingAt_less: $end, sort: TIME) {
+                    media {
+                        id
+                        title { english romaji }
+                        coverImage { large color }
+                        averageScore
+                    }
+                }
+            }
+        }`;
+        variables.start = start; 
+        variables.end = end;
+    } 
+    // MODE: DEEP ARCHIVE
+    else if (type === 'archive') {
+        gqlQuery = `
+        query($year: Int, $season: Season) {
+            Page(perPage: 24) {
+                media(seasonYear: $year, season: $season, type: ANIME, sort: POPULARITY_DESC) {
+                    id
+                    title { english romaji }
+                    coverImage { large color }
+                    averageScore
+                }
+            }
+        }`;
         variables.year = parseInt(year);
-        variables.season = season.toUpperCase();
-    } else {
-        gqlQuery = `query { Page(perPage: 20) { media(season: WINTER, seasonYear: 2026, type: ANIME, sort: POPULARITY_DESC) { id title { english romaji } coverImage { large color } averageScore } } }`;
+        variables.season = season ? season.toUpperCase() : 'WINTER';
+    } 
+    // MODE: TOP RATED
+    else if (type === 'top') {
+        gqlQuery = `
+        query {
+            Page(perPage: 24) {
+                media(sort: SCORE_DESC, type: ANIME, isAdult: false) {
+                    id
+                    title { english romaji }
+                    coverImage { large color }
+                    averageScore
+                }
+            }
+        }`;
+    } 
+    // MODE: CURRENT SEASON (Default)
+    // FIX: Updated to 2025/2026 Winter cycle
+    else {
+        gqlQuery = `
+        query {
+            Page(perPage: 24) {
+                media(season: WINTER, seasonYear: 2025, type: ANIME, sort: POPULARITY_DESC) {
+                    id
+                    title { english romaji }
+                    coverImage { large color }
+                    averageScore
+                }
+            }
+        }`;
     }
 
     try {
         const data = await aniListQuery(gqlQuery, variables);
-        const mapped = data.Page.media.map(a => ({
+        
+        // FIX: Critical check for the nested airingSchedules path
+        let results = [];
+        if (type === 'airing') {
+            // Airing results are unique; we extract the media object and filter duplicates
+            const rawAiring = data.Page.airingSchedules.map(s => s.media);
+            results = Array.from(new Map(rawAiring.map(item => [item.id, item])).values());
+        } else {
+            results = data.Page.media;
+        }
+
+        const mapped = results.map(a => ({
             id: a.id,
             title: a.title.english || a.title.romaji,
             poster: a.coverImage.large,
             color: a.coverImage.color || '#00d4ff',
-            score: (a.averageScore / 10).toFixed(1) || '??'
+            score: a.averageScore ? (a.averageScore / 10).toFixed(1) : '7.0'
         }));
-        myCache.set(cacheKey, mapped);
+        
         res.json(mapped);
     } catch (e) {
-        res.status(500).json({ error: "Data Uplink Failed" });
+        console.error("Vantage Data Error:", e.message);
+        res.status(500).json({ error: "Uplink Failed" });
     }
 });
+
 
 // 3. ANIME DETAIL (The "God Tier" Interface)
 router.get('/anime-detail/:id', async (req, res) => {

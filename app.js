@@ -19,6 +19,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev')); // dev logging
 app.use('/public', express.static(path.join(__dirname, 'public'))); // static assets
+
+
+
 // Cache & API keys
 const myCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 });
 const PORT = process.env.PORT || 3000;
@@ -36,6 +39,7 @@ app.use('/', require('./routes/vantage'));
 app.use('/api/search', require('./routes/search'));
 app.use('/api', require('./routes/vantage'));
 app.use('/api/watchlist', require('./routes/watchlist'));
+app.use('/api', require('./routes/api/vantageAI'));
 // --- Manifest ---
 app.get('/manifest.json', (req, res) => {
 res.json({
