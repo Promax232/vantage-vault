@@ -1,12 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const NodeCache = require('node-cache');
 const axios = require('axios');
-const { HUD_STYLE } = require('../../ui/layout');
-const Groq = require("groq-sdk");
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
-const myCache = new NodeCache({ stdTTL: 3600, checkperiod: 600 });
 
 // --- THE SATELLITE UPLINK (GraphQL) ---
 const aniListQuery = async (query, variables) => {
@@ -15,486 +9,61 @@ const aniListQuery = async (query, variables) => {
             query: query,
             variables: variables
         }, { headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' } });
+        
+        if (response.data.errors) throw new Error("AniList API Error");
         return response.data.data;
     } catch (e) {
-        console.error("AniList Uplink Failure:", e.message);
         throw new Error("Uplink Severed");
     }
 };
 
-// 1. VANTAGE SEARCH (High Speed)
-router.get('/api/vantage-search', async (req, res) => {
-    const query = `
-    query ($search: String) {
-        Page(perPage: 12) {
-            media(search: $search, type: ANIME, sort: POPULARITY_DESC) {
-                id title { english romaji } coverImage { large color } episodes
-            }
-        }
-    }`;
+// 1. VANTAGE SEARCH
+router.get('/vantage-search', async (req, res) => {
+    const query = `query ($search: String) { Page(perPage: 12) { media(search: $search, type: ANIME, sort: POPULARITY_DESC) { id title { english romaji } coverImage { large color } episodes } } }`;
     try {
         const data = await aniListQuery(query, { search: req.query.q });
-        const mapped = data.Page.media.map(a => ({
+        res.json(data.Page.media.map(a => ({
             id: a.id,
             title: a.title.english || a.title.romaji,
             poster: a.coverImage.large,
             color: a.coverImage.color || '#00d4ff',
             total: a.episodes || 0
-        }));
-        res.json(mapped);
+        })));
     } catch (e) { res.status(500).json({ error: "Search Failed" }); }
 });
 
-// 2. VANTAGE DATA (Dashboard Feeds)
-// 2. VANTAGE DATA (Dashboard Feeds) - REVISED
+// 2. VANTAGE DATA (Airing, Archive, Top)
 router.get('/vantage-data', async (req, res) => {
     const { type, year, season } = req.query;
-    
     let gqlQuery = '';
     let variables = { perPage: 24 };
 
-    // MODE: AIRING TODAY (Next 24 Hours)
-    // FIX: Optimized query to get exactly what the HUD needs
     if (type === 'airing') {
         const start = Math.floor(Date.now() / 1000);
         const end = start + 86400;
-        gqlQuery = `
-        query($start: Int, $end: Int) {
-            Page(perPage: 24) {
-                airingSchedules(airingAt_greater: $start, airingAt_less: $end, sort: TIME) {
-                    media {
-                        id
-                        title { english romaji }
-                        coverImage { large color }
-                        averageScore
-                    }
-                }
-            }
-        }`;
-        variables.start = start; 
-        variables.end = end;
-    } 
-    // MODE: DEEP ARCHIVE
-    else if (type === 'archive') {
-        gqlQuery = `
-        query($year: Int, $season: Season) {
-            Page(perPage: 24) {
-                media(seasonYear: $year, season: $season, type: ANIME, sort: POPULARITY_DESC) {
-                    id
-                    title { english romaji }
-                    coverImage { large color }
-                    averageScore
-                }
-            }
-        }`;
+        gqlQuery = `query($start: Int, $end: Int) { Page(perPage: 24) { airingSchedules(airingAt_greater: $start, airingAt_less: $end, sort: TIME) { media { id title { english romaji } coverImage { large color } averageScore } } } }`;
+        variables.start = start; variables.end = end;
+    } else if (type === 'archive') {
+        gqlQuery = `query($year: Int, $season: MediaSeason) { Page(perPage: 24) { media(seasonYear: $year, season: $season, type: ANIME, sort: POPULARITY_DESC) { id title { english romaji } coverImage { large color } averageScore } } }`;
         variables.year = parseInt(year);
         variables.season = season ? season.toUpperCase() : 'WINTER';
-    } 
-    // MODE: TOP RATED
-    else if (type === 'top') {
-        gqlQuery = `
-        query {
-            Page(perPage: 24) {
-                media(sort: SCORE_DESC, type: ANIME, isAdult: false) {
-                    id
-                    title { english romaji }
-                    coverImage { large color }
-                    averageScore
-                }
-            }
-        }`;
-    } 
-    // MODE: CURRENT SEASON (Default)
-    // FIX: Updated to 2025/2026 Winter cycle
-    else {
-        gqlQuery = `
-        query {
-            Page(perPage: 24) {
-                media(season: WINTER, seasonYear: 2025, type: ANIME, sort: POPULARITY_DESC) {
-                    id
-                    title { english romaji }
-                    coverImage { large color }
-                    averageScore
-                }
-            }
-        }`;
+    } else if (type === 'top') {
+        gqlQuery = `query { Page(perPage: 24) { media(sort: SCORE_DESC, type: ANIME, isAdult: false) { id title { english romaji } coverImage { large color } averageScore } } }`;
+    } else {
+        gqlQuery = `query { Page(perPage: 24) { media(season: WINTER, seasonYear: 2026, type: ANIME, sort: POPULARITY_DESC) { id title { english romaji } coverImage { large color } averageScore } } }`;
     }
 
     try {
         const data = await aniListQuery(gqlQuery, variables);
-        
-        // FIX: Critical check for the nested airingSchedules path
-        let results = [];
-        if (type === 'airing') {
-            // Airing results are unique; we extract the media object and filter duplicates
-            const rawAiring = data.Page.airingSchedules.map(s => s.media);
-            results = Array.from(new Map(rawAiring.map(item => [item.id, item])).values());
-        } else {
-            results = data.Page.media;
-        }
-
-        const mapped = results.map(a => ({
+        let results = type === 'airing' ? data.Page.airingSchedules.map(s => s.media) : data.Page.media;
+        res.json(results.map(a => ({
             id: a.id,
             title: a.title.english || a.title.romaji,
             poster: a.coverImage.large,
             color: a.coverImage.color || '#00d4ff',
-            score: a.averageScore ? (a.averageScore / 10).toFixed(1) : '7.0'
-        }));
-        
-        res.json(mapped);
-    } catch (e) {
-        console.error("Vantage Data Error:", e.message);
-        res.status(500).json({ error: "Uplink Failed" });
-    }
-});
-
-
-// 3. ANIME DETAIL (The "God Tier" Interface)
-router.get('/anime-detail/:id', async (req, res) => {
-    const aniId = req.params.id;
-    
-    // THE MASTER QUERY: Fetches everything AniList has in one shot
-    const query = `
-    query ($id: Int) {
-        Media (id: $id, type: ANIME) {
-            id
-            title { english romaji native }
-            description
-            bannerImage
-            coverImage { extraLarge color }
-            averageScore
-            popularity
-            favourites
-            status
-            format
-            episodes
-            duration
-            seasonYear
-            season
-            nextAiringEpisode { airingAt timeUntilAiring episode }
-            rankings { rank type context allTime }
-            studios(isMain: true) { nodes { name } }
-            characters(sort: ROLE, perPage: 12) { nodes { name { full } image { medium } } }
-            relations { nodes { id title { english romaji } coverImage { medium } type } }
-            recommendations(sort: RATING_DESC, perPage: 10) { nodes { mediaRecommendation { id title { english romaji } coverImage { medium } } } }
-            trailer { site id }
-            externalLinks { site url }
-        }
-    }`;
-
-    try {
-        const raw = await aniListQuery(query, { id: parseInt(aniId) });
-        const media = raw.Media;
-        
-        // Data Extraction
-        const data = {
-            id: media.id,
-            title: media.title.english || media.title.romaji,
-            native: media.title.native,
-            desc: media.description || "No Intel Available.",
-            banner: media.bannerImage || media.coverImage.extraLarge,
-            poster: media.coverImage.extraLarge,
-            color: media.coverImage.color || '#00d4ff', // THE DYNAMIC COLOR
-            score: media.averageScore ? (media.averageScore / 10).toFixed(1) : "N/A",
-            popularity: media.popularity,
-            rank: media.rankings.find(r => r.type === 'RATED' && r.allTime) ? `#${media.rankings.find(r => r.type === 'RATED' && r.allTime).rank} All Time` : 'Unranked',
-            status: media.status,
-            format: media.format,
-            year: media.seasonYear,
-            season: media.season,
-            eps: media.episodes,
-            duration: media.duration,
-            nextEp: media.nextAiringEpisode,
-            studio: media.studios.nodes[0]?.name || "Unknown",
-            chars: media.characters.nodes,
-            relations: media.relations.nodes.filter(n => n.type === 'ANIME'),
-            recs: media.recommendations.nodes.map(n => n.mediaRecommendation).filter(Boolean),
-            trailer: media.trailer?.site === 'youtube' ? `https://www.youtube.com/watch?v=${media.trailer.id}` : null,
-            links: media.externalLinks
-        };
-
-        // RENDER GOD TIER UI
-        res.send(`
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>${data.title} | VANTAGE OS</title>
-            ${HUD_STYLE}
-            <style>
-                :root { --hero-color: ${data.color}; } /* DYNAMIC THEME ENGINE */
-                
-                body { background: #0b0c10; overflow-x: hidden; }
-
-                /* CINEMATIC HERO */
-                .hero-banner { 
-                    position: relative; 
-                    height: 400px; 
-                    width: 100%;
-                    background: url('${data.banner}') center/cover no-repeat;
-                }
-                .hero-overlay {
-                    position: absolute; width: 100%; height: 100%;
-                    background: linear-gradient(to top, #0b0c10 10%, rgba(11,12,16,0.6) 50%, rgba(11,12,16,0.3) 100%);
-                    backdrop-filter: blur(0px); /* Clear banner like AniList */
-                }
-                
-                /* LAYOUT GRID (The AniList Structure) */
-                .layout-grid {
-                    display: grid;
-                    grid-template-columns: 240px 1fr;
-                    gap: 40px;
-                    max-width: 1200px;
-                    margin: 0 auto;
-                    padding: 0 20px;
-                    position: relative;
-                    z-index: 10;
-                    margin-top: -150px; /* Pull content up over banner */
-                }
-
-                /* LEFT COLUMN: POSTER & ACTIONS */
-                .poster-card {
-                    width: 100%;
-                    aspect-ratio: 2/3;
-                    border-radius: 6px;
-                    box-shadow: 0 0 30px rgba(0,0,0,0.5), 0 0 10px var(--hero-color);
-                    background: url('${data.poster}') center/cover;
-                    margin-bottom: 20px;
-                }
-                
-                .action-menu { display: flex; flex-direction: column; gap: 10px; }
-                .action-btn {
-                    background: rgba(255,255,255,0.1);
-                    color: white;
-                    border: none;
-                    padding: 12px;
-                    border-radius: 4px;
-                    font-size: 13px;
-                    font-weight: 600;
-                    cursor: pointer;
-                    display: flex; align-items: center; justify-content: center; gap: 8px;
-                    transition: 0.2s;
-                }
-                .action-btn.primary { background: var(--hero-color); color: #000; box-shadow: 0 0 15px var(--hero-color); }
-                .action-btn:hover { transform: scale(1.02); filter: brightness(1.2); }
-
-                .data-list { margin-top: 30px; font-size: 12px; color: #aaa; }
-                .data-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
-                .data-val { color: white; font-weight: 500; text-align: right; }
-
-                /* RIGHT COLUMN: CONTENT */
-                .content-header { margin-top: 110px; margin-bottom: 20px; }
-                .anime-title { font-size: 28px; font-weight: 700; color: white; margin: 0; line-height: 1.2; }
-                
-                /* TABS SYSTEM */
-                .tabs { display: flex; gap: 30px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
-                .tab { 
-                    padding: 15px 0; 
-                    font-size: 14px; 
-                    color: #888; 
-                    cursor: pointer; 
-                    position: relative;
-                    transition: 0.2s;
-                }
-                .tab.active { color: white; font-weight: 600; }
-                .tab.active::after {
-                    content: ''; position: absolute; bottom: -1px; left: 0; width: 100%; height: 3px; background: var(--hero-color);
-                    box-shadow: 0 -5px 10px var(--hero-color);
-                }
-
-                .tab-content { display: none; animation: fadeIn 0.3s ease; }
-                .tab-content.active { display: block; }
-
-                /* STATS BAR */
-                .stats-bar { 
-                    display: flex; gap: 15px; margin-bottom: 25px; 
-                    background: rgba(255,255,255,0.03); padding: 15px; border-radius: 8px;
-                }
-                .stat-box { flex: 1; text-align: center; border-right: 1px solid rgba(255,255,255,0.1); }
-                .stat-box:last-child { border: none; }
-                .stat-label { font-size: 10px; color: var(--hero-color); letter-spacing: 1px; margin-bottom: 5px; }
-                .stat-value { font-size: 18px; font-weight: 700; color: white; }
-
-                /* GRIDS */
-                .char-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 15px; }
-                .char-card { 
-                    display: flex; background: rgba(255,255,255,0.05); border-radius: 4px; overflow: hidden; 
-                    transition: 0.2s; height: 80px;
-                }
-                .char-card:hover { transform: translateY(-3px); background: rgba(255,255,255,0.1); }
-                .char-img { width: 60px; height: 100%; object-fit: cover; }
-                .char-info { padding: 10px; display: flex; flex-direction: column; justify-content: center; }
-
-                /* MOBILE */
-                @media(max-width: 900px) {
-                    .layout-grid { grid-template-columns: 1fr; margin-top: -50px; }
-                    .poster-card { width: 160px; margin: 0 auto 20px; }
-                    .content-header { margin-top: 0; text-align: center; }
-                    .tabs { justify-content: center; }
-                }
-                @keyframes fadeIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
-            </style>
-        </head>
-        <body>
-            ${NAV_COMPONENT}
-            
-            <div class="main-panel" style="padding: 0;">
-                <div class="hero-banner">
-                    <div class="hero-overlay"></div>
-                </div>
-
-                <div class="layout-grid">
-                    <div class="left-col">
-                        <div class="poster-card"></div>
-                        <div class="action-menu">
-                            <button class="action-btn primary" onclick="addToVault('planned')">
-                                <span>+</span> ADD TO PLANNING
-                            </button>
-                            <button class="action-btn" onclick="addToVault('watching')">
-                                <span>▶</span> SET AS WATCHING
-                            </button>
-                            ${data.trailer ? `<a href="${data.trailer}" target="_blank" class="action-btn"><span>⏵</span> WATCH TRAILER</a>` : ''}
-                        </div>
-
-                        <div class="data-list">
-                            <div class="data-row"><span>Format</span><span class="data-val">${data.format}</span></div>
-                            <div class="data-row"><span>Episodes</span><span class="data-val">${data.eps || '?'}</span></div>
-                            <div class="data-row"><span>Duration</span><span class="data-val">${data.duration} mins</span></div>
-                            <div class="data-row"><span>Status</span><span class="data-val">${data.status}</span></div>
-                            <div class="data-row"><span>Season</span><span class="data-val">${data.season} ${data.year}</span></div>
-                            <div class="data-row"><span>Studio</span><span class="data-val">${data.studio}</span></div>
-                            <div class="data-row"><span>Source</span><span class="data-val">Original</span></div>
-                        </div>
-                    </div>
-
-                    <div class="right-col">
-                        <div class="content-header">
-                            <h1 class="anime-title">${data.title}</h1>
-                            <p style="color: #666; font-size: 14px; margin-top: 5px;">${data.native || ''}</p>
-                        </div>
-
-                        <div class="stats-bar">
-                            <div class="stat-box">
-                                <div class="stat-label">SCORE</div>
-                                <div class="stat-value">${data.score}</div>
-                            </div>
-                            <div class="stat-box">
-                                <div class="stat-label">RANK</div>
-                                <div class="stat-value" style="font-size: 14px;">${data.rank}</div>
-                            </div>
-                            <div class="stat-box">
-                                <div class="stat-label">POPULARITY</div>
-                                <div class="stat-value">${data.popularity.toLocaleString()}</div>
-                            </div>
-                            <div class="stat-box">
-                                <div class="stat-label">VAULT STATUS</div>
-                                <div class="stat-value" style="color: var(--hero-color);">TRACKING</div>
-                            </div>
-                        </div>
-
-                        <div class="tabs">
-                            <div class="tab active" onclick="switchTab('overview')">Overview</div>
-                            <div class="tab" onclick="switchTab('chars')">Characters</div>
-                            <div class="tab" onclick="switchTab('relations')">Relations</div>
-                            <div class="tab" onclick="switchTab('ai')">Vantage AI</div>
-                        </div>
-
-                        <div id="overview" class="tab-content active">
-                            ${data.nextEp ? `
-                            <div class="glass" style="border-left: 3px solid var(--hero-color); padding: 15px; margin-bottom: 20px;">
-                                <div style="font-size: 11px; color: var(--hero-color); font-weight: bold;">AIRING SOON</div>
-                                <div style="font-size: 14px;">Episode ${data.nextEp.episode} airs in ${(data.nextEp.timeUntilAiring / 3600 / 24).toFixed(1)} days</div>
-                            </div>` : ''}
-                            
-                            <p style="line-height: 1.8; color: #ccc; font-size: 15px;">${data.desc}</p>
-                            
-                            <h3 style="font-size: 14px; color: #fff; margin-top: 30px; border-bottom: 1px solid #333; padding-bottom: 10px;">RECOMMENDATIONS</h3>
-                            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 15px; margin-top: 15px;">
-                                ${data.recs.map(r => `
-                                <div onclick="location.href='/api/anime-detail/${r.id}'" style="cursor: pointer;">
-                                    <img src="${r.coverImage.medium}" style="width: 100%; border-radius: 4px; aspect-ratio: 2/3;">
-                                    <div style="font-size: 11px; margin-top: 5px; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${r.title.english || r.title.romaji}</div>
-                                </div>
-                                `).join('')}
-                            </div>
-                        </div>
-
-                        <div id="chars" class="tab-content">
-                            <div class="char-grid">
-                                ${data.chars.map(c => `
-                                <div class="char-card">
-                                    <img src="${c.image.medium}" class="char-img">
-                                    <div class="char-info">
-                                        <div style="font-size: 12px; font-weight: 600; color: #fff;">${c.name.full}</div>
-                                        <div style="font-size: 10px; color: #666;">Main Cast</div>
-                                    </div>
-                                </div>
-                                `).join('')}
-                            </div>
-                        </div>
-
-                        <div id="relations" class="tab-content">
-                            <div style="display: flex; gap: 15px; flex-wrap: wrap;">
-                                ${data.relations.length > 0 ? data.relations.map(r => `
-                                <div onclick="location.href='/api/anime-detail/${r.id}'" style="cursor: pointer; width: 140px;">
-                                    <img src="${r.coverImage.medium}" style="width: 100%; border-radius: 4px;">
-                                    <div style="font-size: 10px; margin-top: 5px; color: var(--hero-color);">${r.type}</div>
-                                    <div style="font-size: 11px; color: #fff;">${r.title.english || r.title.romaji}</div>
-                                </div>
-                                `).join('') : '<p style="color:#666;">No linked intelligence files found.</p>'}
-                            </div>
-                        </div>
-
-                        <div id="ai" class="tab-content">
-                            <div class="glass" style="padding: 20px; text-align: center;">
-                                <p style="color: var(--hero-color);">JARVIS UPLINK READY</p>
-                                <p style="font-size: 12px; color: #888;">Ask specific questions about ${data.title}...</p>
-                                <input type="text" id="aiInput" placeholder="Analyze the ending..." style="width: 100%; background: #111; border: 1px solid #333; padding: 10px; color: white; margin-top: 10px;">
-                                <button onclick="askJarvis(${data.id})" class="action-btn primary" style="width: 100%; margin-top: 10px;">ANALYZE</button>
-                                <div id="aiResponse" style="margin-top: 20px; text-align: left; font-size: 13px; line-height: 1.6; color: #ddd;"></div>
-                            </div>
-                        </div>
-
-                    </div>
-                </div>
-            </div>
-
-            <script>
-                function switchTab(tabId) {
-                    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-                    
-                    event.target.classList.add('active');
-                    document.getElementById(tabId).classList.add('active');
-                }
-
-                function addToVault(status) {
-                    const url = \`/api/watchlist/save?id=${data.id}&title=${encodeURIComponent(data.title)}&poster=${encodeURIComponent(data.poster)}&type=anime&source=anilist&total=${data.eps || 12}&status=\${status}\`;
-                    window.location.href = url;
-                }
-
-                async function askJarvis(id) {
-                    const input = document.getElementById('aiInput').value;
-                    const respBox = document.getElementById('aiResponse');
-                    respBox.innerHTML = "Processing...";
-                    
-                    const res = await fetch(\`/api/vantage-chat/\${id}\`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ message: input })
-                    });
-                    const json = await res.json();
-                    respBox.innerHTML = json.response;
-                }
-            </script>
-        </body>
-        </html>
-        `);
-    } catch (e) {
-        console.error(e);
-        res.status(404).send("<h2>404: INTELLIGENCE LOST</h2>");
-    }
+            score: a.averageScore ? (a.averageScore / 10).toFixed(1) : '??'
+        })));
+    } catch (e) { res.status(500).json({ error: "Uplink Failed" }); }
 });
 
 module.exports = router;
