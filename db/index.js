@@ -1,21 +1,27 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
 
-// THE FIX: You MUST use curly braces {} here because showModel exports an object
 const { Show } = require('./showModel'); 
+const { MissionLog } = require('./missionLogModel'); // ADD THIS
 
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log("Vault Uplink Established (MongoDB)"))
     .catch(err => console.error("Vault Connection Error:", err));
 
-const getWatchlist = async () => {
-    return await Show.find({}); // Now this will work!
-};
-
+// --- Legacy Media Methods ---
+const getWatchlist = async () => { return await Show.find({}); };
 const saveWatchlist = async (showData) => {
     await Show.findOneAndUpdate({ id: showData.id }, showData, { upsert: true });
 };
 
-module.exports = { Show, getWatchlist, saveWatchlist };
+// --- NEW JARVIS METHODS ---
+const saveMissionMemory = async (topic, input, response) => {
+    return await MissionLog.create({
+        topic: topic,
+        userInput: input,
+        aiResponse: response
+    });
+};
 
+module.exports = { Show, MissionLog, getWatchlist, saveWatchlist, saveMissionMemory };
 

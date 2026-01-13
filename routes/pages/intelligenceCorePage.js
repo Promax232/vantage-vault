@@ -1,94 +1,163 @@
 const express = require('express');
 const router = express.Router();
-const { getWatchlist } = require('../../db/index');
+const { MissionLog, getWatchlist } = require('../../db/index'); 
 const Groq = require("groq-sdk");
 const { HUD_STYLE, NAV_COMPONENT } = require('../../ui/layout');
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 router.get('/intelligence-core', async (req, res) => {
-    const list = await getWatchlist();
-    const completed = list.filter(s => s.status === 'completed');
-    const watching = list.filter(s => s.status === 'watching');
-    
-    // Neural Analytics
-    const avgRating = completed.length > 0
-        ? (completed.reduce((acc, s) => acc + (s.personalRating || 0), 0) / completed.length).toFixed(1)
-        : "N/A";
-    const totalEps = list.reduce((acc, s) => acc + (s.currentEpisode || 0), 0);
+    // 1. DATA AGGREGATION
+    const logs = await MissionLog.find({}).sort({ createdAt: -1 }).limit(5);
+    const totalMemories = await MissionLog.countDocuments();
+    const list = await getWatchlist(); // Kept for background data
+    const activeProjects = 1; 
 
     res.send(`<html>
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+            <title>Jarvis | Intelligence Core</title>
             ${HUD_STYLE}
             <style>
-                .core-container { padding:40px 20px; max-width:1200px; margin:auto; padding-top:100px; }
-                .stat-card { background: rgba(0,0,0,0.4); border: 1px solid var(--border); border-radius: 20px; padding: 25px; position: relative; overflow: hidden; }
-                .stat-card::before { content:''; position:absolute; top:0; left:0; width:100%; height:2px; background: linear-gradient(90deg, transparent, var(--accent), transparent); }
+                .core-container { padding: 40px; max-width: 1400px; margin: auto; padding-top: 100px; }
                 
-                .pulse { animation: pulse-red 2s infinite; }
-                @keyframes pulse-red { 
-                    0% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.4); }
-                    70% { box-shadow: 0 0 0 10px rgba(0, 212, 255, 0); }
-                    100% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0); }
+                /* STARK GLASS CARDS */
+                .stat-card { 
+                    background: rgba(255, 255, 255, 0.02); 
+                    backdrop-filter: blur(20px); 
+                    border: 1px solid rgba(255, 255, 255, 0.05); 
+                    border-radius: 24px; 
+                    padding: 30px; 
+                    transition: transform 0.3s ease;
                 }
+                .stat-card:hover { transform: translateY(-2px); border-color: rgba(0, 212, 255, 0.2); }
 
+                /* TERMINAL WINDOW - CLEANER */
                 .terminal-window {
-                    background: #050505;
-                    border: 1px solid #1a1a1a;
-                    border-radius: 12px;
-                    font-family: 'Courier New', monospace;
-                    height: 400px;
+                    background: rgba(5, 8, 12, 0.8);
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    border-radius: 20px;
+                    font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+                    height: 600px;
                     display: flex;
                     flex-direction: column;
+                    overflow: hidden;
+                    box-shadow: 0 20px 50px rgba(0,0,0,0.5);
                 }
-                .terminal-header { background: #1a1a1a; padding: 10px 20px; font-size: 10px; letter-spacing: 2px; color: #666; display: flex; justify-content: space-between; }
-                #jarvis-log { flex: 1; padding: 20px; overflow-y: auto; color: #00d4ff; font-size: 13px; line-height: 1.6; }
-                .terminal-input-area { border-top: 1px solid #1a1a1a; padding: 15px; display: flex; gap: 10px; }
-                .t-input { background: transparent; border: none; color: white; flex: 1; outline: none; font-family: inherit; }
+                .terminal-header { 
+                    background: rgba(255, 255, 255, 0.03); 
+                    padding: 15px 25px; 
+                    font-size: 11px; 
+                    letter-spacing: 1px; 
+                    color: #666; 
+                    display: flex; 
+                    align-items: center; 
+                    gap: 10px;
+                    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+                }
+                .dot { width: 10px; height: 10px; border-radius: 50%; }
                 
-                .matrix-bg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0.05; pointer-events: none; z-index: 0; }
+                #jarvis-log { 
+                    flex: 1; 
+                    padding: 30px; 
+                    overflow-y: auto; 
+                    color: #e6edf3; 
+                    font-size: 14px; 
+                    line-height: 1.8; 
+                }
+                
+                /* MEMORY CHIPS */
+                .memory-chip { 
+                    background: rgba(255, 255, 255, 0.03); 
+                    border: 1px solid transparent; 
+                    padding: 12px 15px; 
+                    border-radius: 12px; 
+                    font-size: 12px; 
+                    margin-bottom: 8px; 
+                    cursor: pointer; 
+                    color: #8b949e;
+                    transition: all 0.2s;
+                }
+                .memory-chip:hover { 
+                    background: rgba(0, 212, 255, 0.1); 
+                    border-color: rgba(0, 212, 255, 0.3); 
+                    color: white; 
+                }
+
+                .terminal-input-area { 
+                    padding: 20px; 
+                    background: rgba(255, 255, 255, 0.02);
+                    border-top: 1px solid rgba(255, 255, 255, 0.05);
+                    display: flex; 
+                    gap: 15px; 
+                    align-items: center;
+                }
             </style>
         </head>
         <body>
             ${NAV_COMPONENT}
             <div class="core-container">
-                <div style="margin-bottom: 40px;">
-                    <h1 style="font-size:32px; font-weight:900; margin:0;">INTELLIGENCE <span class="accent-text">CORE</span></h1>
-                    <p style="opacity:0.4; font-size:11px; letter-spacing:3px;">NEURAL ARCHITECTURE V3.3 // STATUS: ACTIVE</p>
-                </div>
-
-                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:25px; margin-bottom:40px;">
-                    <div class="stat-card">
-                        <div style="font-size:10px; opacity:0.5; letter-spacing:2px;">ANALYTIC_RATING</div>
-                        <div style="font-size:42px; font-weight:900; color:var(--accent);">${avgRating}</div>
-                        <div style="font-size:10px; margin-top:10px; color:#444;">DATASET: ${completed.length} TITLES</div>
+                
+                <div style="margin-bottom: 50px; display:flex; justify-content:space-between; align-items:flex-end;">
+                    <div>
+                        <h1 style="font-size:48px; font-weight:800; margin:0; letter-spacing:-1px; background: linear-gradient(180deg, #fff, #888); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                            The Workshop
+                        </h1>
+                        <p style="opacity:0.5; font-size:14px; margin-top:5px;">Systems Architecture & C++ Logic</p>
                     </div>
-                    <div class="stat-card pulse">
-                        <div style="font-size:10px; opacity:0.5; letter-spacing:2px;">COGNITIVE_LOAD</div>
-                        <div style="font-size:42px; font-weight:900; color:white;">${watching.length} <span style="font-size:16px; opacity:0.3;">ACTIVE SYNC</span></div>
-                        <div style="font-size:10px; margin-top:10px; color:var(--accent);">SAVORER PROTOCOL: OPTIMAL</div>
-                    </div>
-                    <div class="stat-card">
-                        <div style="font-size:10px; opacity:0.5; letter-spacing:2px;">TIME_DILATION</div>
-                        <div style="font-size:42px; font-weight:900; color:var(--accent);">${totalEps} <span style="font-size:16px; opacity:0.3;">EPS</span></div>
-                        <div style="font-size:10px; margin-top:10px; color:#444;">RECORDS RETRIEVED FROM VAULT</div>
+                    <div style="text-align:right;">
+                        <span style="background: rgba(0, 212, 255, 0.1); color: var(--accent); padding: 5px 12px; border-radius: 20px; font-size: 11px; font-weight: 600;">ONLINE</span>
                     </div>
                 </div>
 
-                <div class="terminal-window">
-                    <div class="terminal-header">
-                        <span>JARVIS_COGNITIVE_INTERFACE</span>
-                        <span>ENCRYPTED_UPLINK</span>
+                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:30px; margin-bottom:40px;">
+                    <div class="stat-card">
+                        <div style="font-size:12px; color:#888; font-weight:600;">MEMORY VAULT</div>
+                        <div style="font-size:36px; font-weight:700; color:white; margin: 10px 0;">${totalMemories} <span style="font-size:16px; opacity:0.3; font-weight:400;">Nodes</span></div>
+                        <div style="font-size:12px; color:var(--accent);">Ready for input</div>
                     </div>
-                    <div id="jarvis-log">
-                        <div style="color:#666; margin-bottom:10px;">[System Initialization...]</div>
-                        <div>Welcome back, sir. I have analyzed your Hall of Fame. Should we look for a new masterpiece to savor, or shall I provide a tactical breakdown of your current watching habits?</div>
+                    <div class="stat-card">
+                        <div style="font-size:12px; color:#888; font-weight:600;">AGENCY STATUS</div>
+                        <div style="font-size:36px; font-weight:700; color:white; margin: 10px 0;">High <span style="font-size:16px; opacity:0.3; font-weight:400;">Strategic</span></div>
+                        <div style="font-size:12px; color:#444;">Focus: Creation</div>
                     </div>
-                    <div class="terminal-input-area">
-                        <span style="color:var(--accent)">></span>
-                        <input type="text" id="terminal-in" class="t-input" placeholder="Enter command or query..." onkeyup="if(event.key==='Enter') jarvisQuery()">
-                        <button onclick="jarvisQuery()" class="btn" style="padding: 5px 15px; font-size: 10px;">EXECUTE</button>
+                    <div class="stat-card">
+                        <div style="font-size:12px; color:#888; font-weight:600;">ACTIVE PROJECTS</div>
+                        <div style="font-size:36px; font-weight:700; color:white; margin: 10px 0;">${activeProjects} <span style="font-size:16px; opacity:0.3; font-weight:400;">Core</span></div>
+                        <div style="font-size:12px; color:#444;">C++ Mastery</div>
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns: 3fr 1fr; gap:30px;">
+                    
+                    <div class="terminal-window">
+                        <div class="terminal-header">
+                            <div class="dot" style="background:#ff5f56"></div>
+                            <div class="dot" style="background:#ffbd2e"></div>
+                            <div class="dot" style="background:#27c93f"></div>
+                            <span style="margin-left:10px; opacity:0.5;">jarvis_core.exe — ssh</span>
+                        </div>
+                        <div id="jarvis-log">
+                            <div style="color:#666; margin-bottom:15px;">[Connecting to Neural Link...]</div>
+                            <div style="margin-bottom:15px;"><b>JARVIS:</b> Welcome back, Sir. The workbench is clean. What are we building today?</div>
+                            <div style="font-size:12px; opacity:0.4;">(Tip: Type "save this" to store a concept permanently)</div>
+                        </div>
+                        <div class="terminal-input-area">
+                            <span style="color:var(--accent); font-weight:bold;">➜</span>
+                            <input type="text" id="terminal-in" class="t-input" style="font-size:14px;" placeholder="Command..." onkeyup="if(event.key==='Enter') jarvisQuery()">
+                        </div>
+                    </div>
+
+                    <div style="display:flex; flex-direction:column; gap:10px;">
+                        <h3 style="font-size:12px; color:#666; margin:0 0 10px 0; text-transform:uppercase; letter-spacing:1px;">Recent Context</h3>
+                        <div id="memory-list" style="overflow-y:auto; max-height:550px;">
+                            ${logs.map(log => `
+                                <div class="memory-chip" onclick="alert('${log.aiResponse.replace(/'/g, "\\'")}')">
+                                    <div style="font-weight:600; color:#e6edf3; margin-bottom:4px;">${log.topic || 'Engineering'}</div>
+                                    <div style="opacity:0.6;">${log.userInput.substring(0,30)}...</div>
+                                </div>
+                            `).join('')}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -101,8 +170,12 @@ router.get('/intelligence-core', async (req, res) => {
                     if(!val) return;
 
                     input.value = '';
-                    log.innerHTML += '<div style="color:#fff; margin-top:15px; opacity:0.6;">SIR: ' + val + '</div>';
-                    log.innerHTML += '<div id="loading" style="color:#444;">[Processing Intelligence...]</div>';
+                    // User Message
+                    log.innerHTML += '<div style="margin-top:20px; display:flex; gap:10px;"><span style="color:var(--accent); font-weight:bold;">YOU:</span> <span style="opacity:0.9;">' + val + '</span></div>';
+                    
+                    // Loading Indicator
+                    const loadId = 'load-' + Date.now();
+                    log.innerHTML += '<div id="'+loadId+'" style="margin-top:10px; opacity:0.4; font-size:12px;">Computing...</div>';
                     log.scrollTop = log.scrollHeight;
 
                     try {
@@ -112,10 +185,14 @@ router.get('/intelligence-core', async (req, res) => {
                             body: JSON.stringify({ message: val })
                         });
                         const data = await res.json();
-                        document.getElementById('loading').remove();
-                        log.innerHTML += '<div style="margin-top:10px; padding-left:10px; border-left:2px solid var(--accent);">JARVIS: ' + data.response + '</div>';
+                        
+                        document.getElementById(loadId).remove();
+                        
+                        // Jarvis Response (Brotherly Tone)
+                        log.innerHTML += '<div style="margin-top:10px; padding:15px; background:rgba(255,255,255,0.03); border-radius:12px; border-left:3px solid var(--accent); line-height:1.6;">' + data.response + '</div>';
+                        
                     } catch(e) {
-                        log.innerHTML += '<div style="color:var(--red);">UPLINK ERROR: SATELLITE OFFLINE</div>';
+                        document.getElementById(loadId).innerHTML = '<span style="color:#ff4c4c;">uplink_error</span>';
                     }
                     log.scrollTop = log.scrollHeight;
                 }
@@ -123,21 +200,39 @@ router.get('/intelligence-core', async (req, res) => {
         </body></html>`);
 });
 
-// NEW ENDPOINT FOR THE CORE AGENT
+// JARVIS CORE AGENT LOGIC (Unchanged - The Brain remains sharp)
 router.post('/api/jarvis-core-query', async (req, res) => {
-    const list = await getWatchlist();
-    const taste = list.filter(s => s.personalRating >= 8).map(s => s.title).join(", ");
-    
+    const { message } = req.body;
     try {
+        const context = await MissionLog.find({}).sort({ createdAt: -1 }).limit(3);
+        const contextString = context.map(c => c.userInput).join(" | ");
+
         const completion = await groq.chat.completions.create({
             messages: [
-                { role: "system", content: "You are JARVIS. You are an agentic AI built into the VANTAGE Intelligence Core. You help the user (sir) manage his elite watchlist. He is a 'savorer' (no binging). He likes HBO-style masterpieces and high-quality anime. Be tactical, concise, and professional. Address him as sir." },
-                { role: "user", content: `Context: My Hall of Fame includes: ${taste}. My request: ${req.body.message}` }
+                { role: "system", content: `You are JARVIS. An engineering agent for a Neuro-Engineering student.
+                Mission: Master C++ and build high-agency systems. 
+                Context from Vault: ${contextString}.
+                Rules: 
+                1. Focus on 'The Work' (projects).
+                2. Be concise, brotherly, and helpful. Address him as sir.
+                3. If he says "save this", acknowledge the commit to MongoDB.` },
+                { role: "user", content: message }
             ],
             model: "llama-3.3-70b-versatile",
         });
-        res.json({ response: completion.choices[0].message.content });
-    } catch (e) { res.status(500).json({ error: "AI Error" }); }
+
+        const responseText = completion.choices[0].message.content;
+
+        if (message.toLowerCase().includes("save this") || message.toLowerCase().includes("remember this")) {
+            await MissionLog.create({
+                topic: "Engineering",
+                userInput: message,
+                aiResponse: responseText
+            });
+        }
+
+        res.json({ response: responseText });
+    } catch (e) { res.status(500).json({ error: "Uplink Failed" }); }
 });
 
 module.exports = router;
