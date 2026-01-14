@@ -1,19 +1,24 @@
-const CACHE_NAME = 'vantage-cache-v1';
-const urlsToCache = [
+const CACHE_NAME = 'jarvis-kando-v1';
+const ASSETS = [
   '/',
-  '/vantage',
-  '/public/manifest.json',
-  '/public/layout.js'
+  '/index.html',
+  'https://cdn.tailwindcss.com'
 ];
 
+// Install Event
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(urlsToCache))
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(ASSETS);
+    })
   );
 });
 
+// Fetch Event (Network First, then Cache)
 self.addEventListener('fetch', (event) => {
   event.respondWith(
-    caches.match(event.request).then((response) => response || fetch(event.request))
+    fetch(event.request).catch(() => {
+      return caches.match(event.request);
+    })
   );
 });

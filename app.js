@@ -6,11 +6,11 @@ const path = require('path');
 
 const app = express();
 
-// --- 1. SYSTEM INTEGRITY CHECK (Critical Orphans) ---
-const REQUIRED_ORPHANS = ['MONGO_URI', 'GROQ_API_KEY'];
-REQUIRED_ORPHANS.forEach(key => {
+// --- 1. SYSTEM INTEGRITY CHECK ---
+const REQUIRED_KEYS = ['MONGO_URI', 'GROQ_API_KEY', 'TAVILY_API_KEY'];
+REQUIRED_KEYS.forEach(key => {
     if (!process.env[key]) {
-        console.error(`❌ CRITICAL FAILURE: ${key} missing. Shutting down.`);
+        console.error(`❌ CRITICAL FAILURE: ${key} missing. JARVIS cannot initialize.`);
         process.exit(1);
     }
 });
@@ -19,24 +19,24 @@ REQUIRED_ORPHANS.forEach(key => {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
+
+// Static sector: Images, CSS, and JS
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
-// --- 3. PWA SERVICE WORKER & MANIFEST ---
-// Serve manifest and service worker for PWA support
+// --- 3. PWA & CORE ASSETS ---
+// Directly serving the PWA essentials from the root for better browser recognition
 app.get('/manifest.json', (req, res) => res.sendFile(path.join(__dirname, 'public', 'manifest.json')));
 app.get('/service-worker.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'service-worker.js')));
 
-// --- 4. MISSION-CRITICAL ROUTES ---
-app.use('/', require('./routes/pages/intelligenceCorePage'));
-app.use('/', require('./routes/pages/vantagePage'));
-app.use('/api', require('./routes/api/vantageAI'));
+// --- 4. API GATEWAY ---
+// Routing all JARVIS intelligence through one clean endpoint
+const jarvisRoutes = require('./routes/api/jarvis');
+app.use('/api/jarvis', jarvisRoutes);
 
-// --- 5. VAULT UPLINK (MongoDB with Auto-Reconnection) ---
+// --- 5. VAULT UPLINK (MongoDB) ---
 const connectVault = async () => {
     try {
-        await mongoose.connect(process.env.MONGO_URI, {
-            serverSelectionTimeoutMS: 5000
-        });
+        await mongoose.connect(process.env.MONGO_URI);
         console.log("✅ Vault Uplink Established (MongoDB)");
     } catch (err) {
         console.error("❌ Vault Connection Error. Retrying in 5s...", err.message);
@@ -45,22 +45,20 @@ const connectVault = async () => {
 };
 connectVault();
 
-// --- 6. ARCHITECT'S DEFAULT REDIRECT ---
-app.get('/', (req, res) => res.redirect('/intelligence-core'));
-
-// --- 7. GLOBAL ERROR HANDLING (Failsafe) ---
-// 404 Handler
-app.use((req, res) => {
-    res.status(404).send("<h2>404: Node Unreachable in this Sector</h2>");
+// --- 6. UNIFIED HUD REDIRECT ---
+// No more sidebars or page-thrashing. One interface to rule them all.
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// 500 Centralized Error Handler
+// --- 7. FAILSAFE HANDLERS ---
+app.use((req, res) => {
+    res.status(404).send("<h2>Sector Uncharted: 404</h2>");
+});
+
 app.use((err, req, res, next) => {
     console.error("⚠️ SYSTEM EXCEPTION:", err.stack);
-    res.status(500).json({
-        status: "Core Error",
-        message: process.env.NODE_ENV === 'production' ? "Internal Core Error" : err.message
-    });
+    res.status(500).json({ status: "Core Error", message: "Internal Neural Failure." });
 });
 
 // --- 8. POWER ON ---
@@ -68,5 +66,5 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`\n🚀 JARVIS OS ONLINE`);
     console.log(`📡 PORT: ${PORT}`);
-    console.log(`🧠 ARCHITECT MODE: Tony Stark Activated\n`);
+    console.log(`🧠 ARCHITECT MODE: High-Agency Engineer Activated\n`);
 });

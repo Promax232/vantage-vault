@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <title>JARVIS // KANDO</title>
+
+    <link rel="manifest" href="/manifest.json" />
+
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+      body {
+        background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
+        background-size: 400% 400%;
+        animation: gradient 15s ease infinite;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        height: 100vh;
+        margin: 0;
+        overflow: hidden;
+      }
+
+      @keyframes gradient {
+        0% {
+          background-position: 0% 50%;
+        }
+        50% {
+          background-position: 100% 50%;
+        }
+        100% {
+          background-position: 0% 50%;
+        }
+      }
+
+      .glass-panel {
+        background: rgba(255, 255, 255, 0.25);
+        box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+        -webkit-backdrop-filter: blur(12px);
+        backdrop-filter: blur(12px);
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+      }
+
+      .glass-input {
+        background: rgba(255, 255, 255, 0.4);
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        color: #1a202c;
+      }
+
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+
+      .typing-dot {
+        animation: pulse 1.5s infinite;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 0.3;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+    </style>
+  </head>
+  <body class="flex flex-col items-center justify-center h-screen w-screen p-4">
+    <div
+      class="glass-panel w-full max-w-2xl h-[85vh] flex flex-col relative overflow-hidden shadow-2xl"
+    >
+      <div
+        class="p-4 border-b border-white/20 flex justify-between items-center"
+      >
+        <div class="flex items-center gap-2">
+          <div class="w-3 h-3 rounded-full bg-green-400 animate-pulse"></div>
+          <h1 class="text-white font-bold tracking-widest text-sm uppercase">
+            Jarvis // Online
+          </h1>
+        </div>
+        <div class="text-white/60 text-xs uppercase font-medium">
+          System Nominal
+        </div>
+      </div>
+
+      <div
+        id="chat-feed"
+        class="flex-1 overflow-y-auto p-6 space-y-4 no-scrollbar flex flex-col-reverse"
+      >
+        <div
+          class="self-start bg-white/40 text-gray-900 p-4 rounded-2xl rounded-tl-none max-w-[85%] backdrop-blur-sm text-sm shadow-sm border border-white/20"
+        >
+          Sir, the PWA protocols are active. The terminal is now installable.
+        </div>
+      </div>
+
+      <div class="p-4 bg-white/10 border-t border-white/20">
+        <form id="command-form" class="flex gap-2">
+          <input
+            type="text"
+            id="user-input"
+            placeholder="Type your directive..."
+            class="glass-input w-full px-4 py-3 rounded-xl transition-all placeholder-gray-600 font-medium text-sm"
+            autocomplete="off"
+          />
+          <button
+            type="submit"
+            class="bg-white/90 hover:bg-white text-gray-800 px-6 py-2 rounded-xl transition-all shadow-lg font-bold"
+          >
+            SEND
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <script>
+      const form = document.getElementById("command-form");
+      const input = document.getElementById("user-input");
+      const feed = document.getElementById("chat-feed");
+
+      function addMessage(text, isUser = false) {
+        const div = document.createElement("div");
+        div.className = isUser
+          ? "self-end bg-blue-600/90 text-white p-3 rounded-2xl rounded-tr-none max-w-[80%] text-sm shadow-md mb-2"
+          : "self-start bg-white/40 text-gray-900 p-3 rounded-2xl rounded-tl-none max-w-[80%] backdrop-blur-sm text-sm shadow-sm mb-2 border border-white/10";
+        div.innerText = text;
+        feed.prepend(div);
+      }
+
+      function showTyping() {
+        const id = "typing-" + Date.now();
+        const div = document.createElement("div");
+        div.id = id;
+        div.className =
+          "self-start bg-white/20 p-3 rounded-2xl rounded-tl-none mb-2 flex gap-1";
+        div.innerHTML = `<span class="typing-dot">●</span><span class="typing-dot" style="animation-delay:0.2s">●</span><span class="typing-dot" style="animation-delay:0.4s">●</span>`;
+        feed.prepend(div);
+        return id;
+      }
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const message = input.value.trim();
+        if (!message) return;
+
+        addMessage(message, true);
+        input.value = "";
+        const typingId = showTyping();
+
+        try {
+          const res = await fetch("/api/jarvis/query", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message }),
+          });
+
+          if (!res.ok) throw new Error("API_OFFLINE");
+
+          const data = await res.json();
+          const typingElement = document.getElementById(typingId);
+          if (typingElement) typingElement.remove();
+
+          addMessage(data.response || "No response received.");
+        } catch (err) {
+          const typingElement = document.getElementById(typingId);
+          if (typingElement) typingElement.remove();
+          addMessage("⚠️ Link severed. Check backend connectivity, Sir.");
+        }
+      });
+
+      // SERVICE WORKER REGISTRATION
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker
+            .register("/service-worker.js")
+            .then((reg) => console.log("JARVIS: Service Worker Online"))
+            .catch((err) =>
+              console.error("JARVIS: Service Worker Offline", err)
+            );
+        });
+      }
+    </script>
+  </body>
+</html>

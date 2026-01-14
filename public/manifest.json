@@ -1,11 +1,17 @@
 {
-  "name": "Vantage OS",
-  "short_name": "VANTAGE",
-  "description": "Intelligence HUD for all devices",
-  "start_url": "/vantage",
+  "name": "JARVIS MK-II",
+  "short_name": "JARVIS",
+  "description": "High-Agency Independence Terminal",
+  "start_url": "/",
   "display": "standalone",
-  "background_color": "#030508",
-  "theme_color": "#00d4ff",
-  "orientation": "any",
-  "icons": []
+  "background_color": "#e73c7e",
+  "theme_color": "#ee7752",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3665/3665923.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
 }
