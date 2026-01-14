@@ -1,20 +1,36 @@
 const { tavily } = require("@tavily/core");
-const axios = require('axios');
-const { search } = require('duck-duck-scrape');
+const axios = require("axios");
+const { search } = require("duck-duck-scrape");
 
-function normalize(label, content) {
-    return {
-        source: label,
-        content,
-        confidence: label === "TAVILY" ? 0.9 : label === "BRAVE" ? 0.7 : 0.5
-    };
+/**
+ * Unified perception contract
+ */
+function perception(verdict, content = null, confidence = 0.0, source = "INTERNAL") {
+    return { verdict, content, confidence, source };
+}
+
+/**
+ * PHASE 0 — SHOULD SEARCH?
+ * Lightweight heuristic. Fast. Cheap.
+ */
+function shouldSearch(query) {
+    const triggers = [
+        "current", "latest", "today", "now",
+        "release date", "news", "price",
+        "who is", "what is", "when did",
+        "how many", "statistics"
+    ];
+
+    return triggers.some(t => query.toLowerCase().includes(t));
 }
 
 // ─────────────────────────────
-// TIER 1 — AUTHORITATIVE SYNTHESIS
+// PHASE 1 — ANSWER-FIRST INTELLIGENCE
 // ─────────────────────────────
-async function searchTavily(query) {
-    if (!process.env.TAVILY_API_KEY) throw new Error("Tavily Key Missing");
+async function tavilyAnswer(query) {
+    if (!process.env.TAVILY_API_KEY) {
+        throw new Error("Tavily unavailable");
+    }
 
     const client = tavily({ apiKey: process.env.TAVILY_API_KEY });
     const response = await client.search(query, {
@@ -23,90 +39,85 @@ async function searchTavily(query) {
         include_answer: true
     });
 
-    if (!response.answer) throw new Error("Low signal");
-
-    return normalize(
-        "TAVILY",
-        response.answer
-    );
-}
-
-// ─────────────────────────────
-// TIER 2 — REINFORCEMENT SCAN
-// ─────────────────────────────
-async function searchBrave(query) {
-    if (!process.env.BRAVE_API_KEY) throw new Error("Brave Key Missing");
-
-    const response = await axios.get(
-        'https://api.search.brave.com/res/v1/web/search',
-        {
-            headers: {
-                'Accept': 'application/json',
-                'X-Subscription-Token': process.env.BRAVE_API_KEY
-            },
-            params: { q: query, count: 5 }
-        }
-    );
-
-    const results = response.data.web?.results;
-    if (!results?.length) throw new Error("No Brave signal");
-
-    const summary = results
-        .slice(0, 3)
-        .map(r => `• ${r.title}: ${r.description}`)
-        .join('\n');
-
-    return normalize("BRAVE", summary);
-}
-
-// ─────────────────────────────
-// TIER 3 — RAW CORROBORATION
-// ─────────────────────────────
-async function searchDDG(query) {
-    const searchResults = await search(query, { safeSearch: 1 });
-
-    if (!searchResults.results?.length) {
-        throw new Error("DDG empty");
+    if (!response?.answer) {
+        throw new Error("Low Tavily signal");
     }
 
-    const data = searchResults.results
-        .slice(0, 3)
-        .map(r => `• ${r.title}: ${r.description}`)
-        .join('\n');
-
-    return normalize("DUCKDUCKGO", data);
+    return perception(
+        "ANSWERED",
+        response.answer,
+        0.85,
+        "TAVILY"
+    );
 }
 
 // ─────────────────────────────
-// TIER 4 — SILENCE PROTOCOL
+// PHASE 2 — VERIFICATION (SILENT)
 // ─────────────────────────────
-function controlledSilence() {
-    return {
-        source: "SILENCE_PROTOCOL",
-        content: "External intelligence is inconclusive. Recommend proceeding with internal reasoning.",
-        confidence: 0.2
-    };
+async function verifyWithBrave(query) {
+    if (!process.env.BRAVE_API_KEY) return 0;
+
+    const response = await axios.get(
+        "https://api.search.brave.com/res/v1/web/search",
+        {
+            headers: {
+                "Accept": "application/json",
+                "X-Subscription-Token": process.env.BRAVE_API_KEY
+            },
+            params: { q: query, count: 3 }
+        }
+    );
+
+    return response.data?.web?.results?.length ? 0.1 : 0;
+}
+
+async function verifyWithDDG(query) {
+    const result = await search(query, { safeSearch: 1 });
+    return result?.results?.length ? 0.05 : 0;
 }
 
 // ─────────────────────────────
-// FAILSAFE ORCHESTRATOR
+// PHASE 3 — SILENCE PROTOCOL
+// ─────────────────────────────
+function silence() {
+    return perception(
+        "UNCERTAIN",
+        "External intelligence is inconclusive. Recommend internal reasoning.",
+        0.25,
+        "SILENCE_PROTOCOL"
+    );
+}
+
+// ─────────────────────────────
+// COGNITIVE PERCEPTION ORCHESTRATOR
 // ─────────────────────────────
 async function executeFailsafeSearch(query) {
+    // Phase 0 — Judgment first
+    if (!shouldSearch(query)) {
+        return perception("INTERNAL_ONLY", null, 1.0, "CORE_REASONING");
+    }
+
     try {
-        return await searchTavily(query);
-    } catch {
-        console.warn("⚠️ [GRID] Tier 1 offline. Falling back...");
-        try {
-            return await searchBrave(query);
-        } catch {
-            console.warn("⚠️ [GRID] Tier 2 degraded. Scavenging...");
-            try {
-                return await searchDDG(query);
-            } catch {
-                console.warn("⚠️ [GRID] All tiers degraded. Engaging silence.");
-                return controlledSilence();
-            }
-        }
+        // Phase 1 — Primary answer
+        const primary = await tavilyAnswer(query);
+
+        // Phase 2 — Silent verification
+        const braveBoost = await verifyWithBrave(query);
+        const ddgBoost = await verifyWithDDG(query);
+
+        const finalConfidence = Math.min(
+            primary.confidence + braveBoost + ddgBoost,
+            0.95
+        );
+
+        return {
+            ...primary,
+            confidence: finalConfidence
+        };
+
+    } catch (err) {
+        console.warn("⚠️ [GRID] Primary intelligence degraded.");
+        return silence();
     }
 }
 
