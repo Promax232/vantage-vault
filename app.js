@@ -20,16 +20,14 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
 
-// Static sector: Images, CSS, and JS
-app.use('/public', express.static(path.join(__dirname, 'public')));
+// Static sector: Serve everything in public
+app.use(express.static(path.join(__dirname, 'public')));
 
 // --- 3. PWA & CORE ASSETS ---
-// Directly serving the PWA essentials from the root for better browser recognition
 app.get('/manifest.json', (req, res) => res.sendFile(path.join(__dirname, 'public', 'manifest.json')));
 app.get('/service-worker.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'service-worker.js')));
 
 // --- 4. API GATEWAY ---
-// Routing all JARVIS intelligence through one clean endpoint
 const jarvisRoutes = require('./routes/api/jarvis');
 app.use('/api/jarvis', jarvisRoutes);
 
@@ -46,14 +44,19 @@ const connectVault = async () => {
 connectVault();
 
 // --- 6. UNIFIED HUD REDIRECT ---
-// No more sidebars or page-thrashing. One interface to rule them all.
+// This ensures that even if you visit /intelligence-core, it sends you to the HUD
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+app.get('/intelligence-core', (req, res) => {
+    res.redirect('/');
+});
+
 // --- 7. FAILSAFE HANDLERS ---
 app.use((req, res) => {
-    res.status(404).send("<h2>Sector Uncharted: 404</h2>");
+    // Sir, if a route is missing, we bring them back to the HUD instead of showing a 404
+    res.redirect('/');
 });
 
 app.use((err, req, res, next) => {
