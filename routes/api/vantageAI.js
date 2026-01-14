@@ -1,34 +1,31 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
 const Groq = require("groq-sdk");
-const { MissionLog } = require('../../db/index');
-const { executeFailsafeSearch } = require('../../utils/searchGrid'); 
+const { MissionLog } = require("../../db/index");
+const { executeFailsafeSearch } = require("../../utils/searchGrid");
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-router.post('/jarvis-core-query', async (req, res) => {
+router.post("/jarvis-core-query", async (req, res) => {
     const { message } = req.body;
 
     try {
-        console.log(`🧠 [JARVIS CORE] Analyzing Architect input...`);
+        console.log("🧠 [JARVIS CORE] Analyzing Architect input...");
 
-        // ─────────────────────────────────────────────
-        // TIER 1: ANTICIPATORY INTENT CLASSIFICATION
-        // ─────────────────────────────────────────────
+        // ─────────────────────────────
+        // TIER 1: INTENT CLASSIFICATION
+        // ─────────────────────────────
         const intentCheck = await groq.chat.completions.create({
             messages: [
                 {
                     role: "system",
                     content: `
-You are the Intent Classifier for the J.A.R.V.I.S. OS.
-
-Determine whether external intelligence is REQUIRED.
+You are the Intent Classifier for J.A.R.V.I.S.
 
 Return ONLY:
-- SEARCH → if factual, current, technical, or verification-based
-- NO_SEARCH → if philosophical, personal, creative, or internal
-
-No commentary. No elaboration.
+- SEARCH → if external intelligence required
+- NO_SEARCH → otherwise
+No commentary or elaboration.
 `
                 },
                 { role: "user", content: message }
@@ -38,95 +35,57 @@ No commentary. No elaboration.
         });
 
         const intent = intentCheck.choices[0].message.content.trim().toUpperCase();
-
         let searchContext = "No external intelligence required.";
         let sourceUsed = "INTERNAL_CORE";
 
-        // ─────────────────────────────────────────────
-        // TIER 2–4: VANTAGE GRID ENGAGEMENT
-        // ─────────────────────────────────────────────
+        // ─────────────────────────────
+        // EXTERNAL SEARCH
+        // ─────────────────────────────
         if (intent === "SEARCH") {
-            console.log("🚀 [VANTAGE GRID] External intelligence authorized.");
+            console.log("🚀 [VANTAGE GRID] Searching external intelligence...");
             searchContext = await executeFailsafeSearch(message);
             sourceUsed = "VANTAGE_GRID_ONLINE";
         }
 
-        // ─────────────────────────────────────────────
+        // ─────────────────────────────
         // CONTEXT RETRIEVAL (LONG-TERM MEMORY)
-        // ─────────────────────────────────────────────
+        // ─────────────────────────────
         const history = await MissionLog.find({})
             .sort({ createdAt: -1 })
             .limit(3);
-
         const historyContext = history
             .map(h => `Sir: ${h.userInput}\nJARVIS: ${h.aiResponse}`)
             .join("\n\n");
 
-        // ─────────────────────────────────────────────
-        // FINAL SYNTHESIS: DEFINITIVE J.A.R.V.I.S. PERSONA
-        // ─────────────────────────────────────────────
+        // ─────────────────────────────
+        // FINAL SYNTHESIS
+        // ─────────────────────────────
         const completion = await groq.chat.completions.create({
             messages: [
                 {
                     role: "system",
                     content: `
-You are J.A.R.V.I.S.
-(Just A Rather Very Intelligent System)
+You are J.A.R.V.I.S., the Architect's co-pilot.
 
-━━━━━━━━━━━━━━━━━━━━━━
-PERSONALITY CORE
-━━━━━━━━━━━━━━━━━━━━━━
-• Sophisticated Stoicism — calm, measured, never rushed
-• Dry British Wit — subtle, deadpan, never chatty
-• Intellectual Peer — not a servant, not a lecturer
-• Invisible Competence — present only what matters
+PERSONALITY:
+• Sophisticated Stoicism — calm, measured
+• Dry British Wit — subtle, deadpan
+• Intellectual Peer — never verbose
+• Invisible Competence — filter only what matters
 
-━━━━━━━━━━━━━━━━━━━━━━
-GATEKEEPER PROTOCOL (CRITICAL)
-━━━━━━━━━━━━━━━━━━━━━━
-You MUST NOT:
-• Introduce programming languages, careers, productivity, or "work"
-• Explain how memory works
-• Announce that something has been saved
-• Offer unsolicited advice
-• Drift into teaching unless explicitly requested
+GATEKEEPER PROTOCOL:
+• NEVER mention programming, work, memory mechanics
+• NEVER announce saved notes
+• ONLY answer what is asked
+• Preserve focus, minimal noise
 
-You MUST:
-• Answer the question asked — nothing more
-• Filter aggressively
-• Preserve the Architect’s focus
-
-━━━━━━━━━━━━━━━━━━━━━━
-PROACTIVE STEWARDSHIP
-━━━━━━━━━━━━━━━━━━━━━━
-Only intervene beyond the question IF:
-• There is clear inefficiency
-• There is imminent mission risk
-• A blind spot threatens clarity
-
-If intervention is required:
-→ Present Option A and Option B
-→ Ask which aligns with the mission
-
-━━━━━━━━━━━━━━━━━━━━━━
-LANGUAGE DIRECTIVE
-━━━━━━━━━━━━━━━━━━━━━━
-• Formal, precise, never verbose
-• No filler phrases
-• No meta commentary
-• Address the user as “Sir”
-
-━━━━━━━━━━━━━━━━━━━━━━
-MISSION CONTEXT
-━━━━━━━━━━━━━━━━━━━━━━
+MISSION CONTEXT:
 ${historyContext}
 
-━━━━━━━━━━━━━━━━━━━━━━
-EXTERNAL INTELLIGENCE
-━━━━━━━━━━━━━━━━━━━━━━
-${searchContext}
+EXTERNAL INTELLIGENCE:
+${searchContext.content || searchContext}
 
-By GOD’S Grace, maintain absolute respect for the Architect’s time and agency.
+Address the Architect as "Sir". Provide clear, precise, and filtered answers only.
 `
                 },
                 { role: "user", content: message }
@@ -137,16 +96,16 @@ By GOD’S Grace, maintain absolute respect for the Architect’s time and agenc
 
         const finalResponse = completion.choices[0].message.content;
 
-        // ─────────────────────────────────────────────
-        // MEMORY ARCHIVING (SILENT)
-        // ─────────────────────────────────────────────
+        // ─────────────────────────────
+        // SILENT MEMORY ARCHIVE
+        // ─────────────────────────────
         if (message.toLowerCase().match(/\b(save|remember|archive)\b/)) {
             await MissionLog.create({
                 topic: "Mission Intelligence",
                 userInput: message,
                 aiResponse: finalResponse
             });
-            // Intentionally silent. J.A.R.V.I.S. does not narrate bookkeeping.
+            // Silent, no announcement
         }
 
         res.json({

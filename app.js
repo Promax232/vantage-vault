@@ -6,48 +6,50 @@ const path = require('path');
 
 const app = express();
 
-// --- 1. SYSTEM INTEGRITY CHECK (Strict Validation) ---
-// Ensuring the Architect's environment is fully provisioned before ignition.
+// --- 1. SYSTEM INTEGRITY CHECK (Critical Orphans) ---
 const REQUIRED_ORPHANS = ['MONGO_URI', 'GROQ_API_KEY'];
 REQUIRED_ORPHANS.forEach(key => {
     if (!process.env[key]) {
-        console.error(`❌ CRITICAL FAILURE: ${key} is missing. System shutdown.`);
-        process.exit(1); 
+        console.error(`❌ CRITICAL FAILURE: ${key} missing. Shutting down.`);
+        process.exit(1);
     }
 });
 
 // --- 2. MIDDLEWARE STACK ---
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(morgan('dev')); 
+app.use(morgan('dev'));
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
-// --- 3. MISSION-CRITICAL ROUTES ---
-// Intelligence Core & Interface Controllers
+// --- 3. PWA SERVICE WORKER & MANIFEST ---
+// Serve manifest and service worker for PWA support
+app.get('/manifest.json', (req, res) => res.sendFile(path.join(__dirname, 'public', 'manifest.json')));
+app.get('/service-worker.js', (req, res) => res.sendFile(path.join(__dirname, 'public', 'service-worker.js')));
+
+// --- 4. MISSION-CRITICAL ROUTES ---
 app.use('/', require('./routes/pages/intelligenceCorePage'));
 app.use('/', require('./routes/pages/vantagePage'));
 app.use('/api', require('./routes/api/vantageAI'));
 
-// --- 4. VAULT UPLINK (MongoDB with Auto-Reconnection) ---
-// Establishing long-term memory with high-availability settings.
+// --- 5. VAULT UPLINK (MongoDB with Auto-Reconnection) ---
 const connectVault = async () => {
     try {
         await mongoose.connect(process.env.MONGO_URI, {
-            serverSelectionTimeoutMS: 5000 // Fail fast if the vault is unreachable
+            serverSelectionTimeoutMS: 5000
         });
         console.log("✅ Vault Uplink Established (MongoDB)");
     } catch (err) {
         console.error("❌ Vault Connection Error. Retrying in 5s...", err.message);
-        setTimeout(connectVault, 5000); // Resilience: Re-attempt connection
+        setTimeout(connectVault, 5000);
     }
 };
 connectVault();
 
-// --- 5. ARCHITECT'S DEFAULT REDIRECT ---
+// --- 6. ARCHITECT'S DEFAULT REDIRECT ---
 app.get('/', (req, res) => res.redirect('/intelligence-core'));
 
-// --- 6. GLOBAL ERROR HANDLING (The Failsafe) ---
-// 404 Handler for rogue requests
+// --- 7. GLOBAL ERROR HANDLING (Failsafe) ---
+// 404 Handler
 app.use((req, res) => {
     res.status(404).send("<h2>404: Node Unreachable in this Sector</h2>");
 });
@@ -61,10 +63,10 @@ app.use((err, req, res, next) => {
     });
 });
 
-// --- 7. POWER ON ---
+// --- 8. POWER ON ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`\n🚀 JARVIS OS ONLINE`);
     console.log(`📡 PORT: ${PORT}`);
-    console.log(`🧠 ARCHITECT: Tony Stark Mode Active\n`);
+    console.log(`🧠 ARCHITECT MODE: Tony Stark Activated\n`);
 });

@@ -1,0 +1,11 @@
+{
+  "name": "Vantage OS",
+  "short_name": "VANTAGE",
+  "description": "Intelligence HUD for all devices",
+  "start_url": "/vantage",
+  "display": "standalone",
+  "background_color": "#030508",
+  "theme_color": "#00d4ff",
+  "orientation": "any",
+  "icons": []
+}

@@ -20,17 +20,24 @@ function shouldSearch(query) {
         "who is", "what is", "when did",
         "how many", "statistics"
     ];
-
     return triggers.some(t => query.toLowerCase().includes(t));
+}
+
+/**
+ * Filter search results by relevance keywords
+ */
+function filterRelevant(content, query) {
+    const lowerQuery = query.toLowerCase();
+    const lines = content.split("\n");
+    const filtered = lines.filter(l => l.toLowerCase().includes(lowerQuery));
+    return filtered.length ? filtered.join("\n") : content;
 }
 
 // ─────────────────────────────
 // PHASE 1 — ANSWER-FIRST INTELLIGENCE
 // ─────────────────────────────
 async function tavilyAnswer(query) {
-    if (!process.env.TAVILY_API_KEY) {
-        throw new Error("Tavily unavailable");
-    }
+    if (!process.env.TAVILY_API_KEY) throw new Error("Tavily unavailable");
 
     const client = tavily({ apiKey: process.env.TAVILY_API_KEY });
     const response = await client.search(query, {
@@ -39,13 +46,13 @@ async function tavilyAnswer(query) {
         include_answer: true
     });
 
-    if (!response?.answer) {
-        throw new Error("Low Tavily signal");
-    }
+    if (!response?.answer) throw new Error("Low Tavily signal");
+
+    const filteredAnswer = filterRelevant(response.answer, query);
 
     return perception(
         "ANSWERED",
-        response.answer,
+        filteredAnswer,
         0.85,
         "TAVILY"
     );
@@ -57,23 +64,33 @@ async function tavilyAnswer(query) {
 async function verifyWithBrave(query) {
     if (!process.env.BRAVE_API_KEY) return 0;
 
-    const response = await axios.get(
-        "https://api.search.brave.com/res/v1/web/search",
-        {
-            headers: {
-                "Accept": "application/json",
-                "X-Subscription-Token": process.env.BRAVE_API_KEY
-            },
-            params: { q: query, count: 3 }
-        }
-    );
-
-    return response.data?.web?.results?.length ? 0.1 : 0;
+    try {
+        const response = await axios.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            {
+                headers: {
+                    "Accept": "application/json",
+                    "X-Subscription-Token": process.env.BRAVE_API_KEY
+                },
+                params: { q: query, count: 3 }
+            }
+        );
+        const results = response.data?.web?.results || [];
+        const relevantCount = results.filter(r => r.title.toLowerCase().includes(query.toLowerCase())).length;
+        return relevantCount ? 0.1 : 0;
+    } catch {
+        return 0;
+    }
 }
 
 async function verifyWithDDG(query) {
-    const result = await search(query, { safeSearch: 1 });
-    return result?.results?.length ? 0.05 : 0;
+    try {
+        const result = await search(query, { safeSearch: 1 });
+        const relevantCount = (result?.results || []).filter(r => r.title.toLowerCase().includes(query.toLowerCase())).length;
+        return relevantCount ? 0.05 : 0;
+    } catch {
+        return 0;
+    }
 }
 
 // ─────────────────────────────
@@ -101,20 +118,15 @@ async function executeFailsafeSearch(query) {
         // Phase 1 — Primary answer
         const primary = await tavilyAnswer(query);
 
-        // Phase 2 — Silent verification
-        const braveBoost = await verifyWithBrave(query);
-        const ddgBoost = await verifyWithDDG(query);
+        // Phase 2 — Parallel verification (Brave + DDG)
+        const [braveBoost, ddgBoost] = await Promise.allSettled([
+            verifyWithBrave(query),
+            verifyWithDDG(query)
+        ]).then(results => results.map(r => r.status === "fulfilled" ? r.value : 0));
 
-        const finalConfidence = Math.min(
-            primary.confidence + braveBoost + ddgBoost,
-            0.95
-        );
+        const finalConfidence = Math.min(primary.confidence + braveBoost + ddgBoost, 0.95);
 
-        return {
-            ...primary,
-            confidence: finalConfidence
-        };
-
+        return { ...primary, confidence: finalConfidence };
     } catch (err) {
         console.warn("⚠️ [GRID] Primary intelligence degraded.");
         return silence();

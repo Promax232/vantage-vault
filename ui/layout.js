@@ -17,7 +17,7 @@ body {
     -webkit-font-smoothing: antialiased; 
 }
 
-/* THE STARK GLASS EFFECT */
+/* GLASS EFFECT */
 .glass { 
     background: var(--card); 
     backdrop-filter: blur(20px); 
@@ -39,7 +39,6 @@ body {
     font-weight: 700;
 }
 
-/* CLEANER INPUTS */
 .input-field { 
     background: rgba(255, 255, 255, 0.05); 
     border: 1px solid var(--border); 
@@ -70,7 +69,6 @@ body {
     box-shadow: 0 0 20px rgba(0, 212, 255, 0.4);
 }
 
-/* JARVIS SIDEBAR: PERSONAL & SLEEK */
 .sidebar { 
     position: fixed; top: 0; left: -340px; 
     width: 320px; height: 100vh; 
@@ -110,7 +108,11 @@ body {
 
 const NAV_COMPONENT = `
 <button class="nav-burger" onclick="toggleNav()">
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="3" y1="12" x2="21" y2="12"></line>
+        <line x1="3" y1="6" x2="21" y2="6"></line>
+        <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
 </button>
 <div id="overlay" class="overlay" onclick="toggleNav()" style="position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.4); z-index:1000; opacity:0; pointer-events:none; transition:0.5s; visibility:hidden;"></div>
 <div id="sidebar" class="sidebar">
@@ -118,8 +120,8 @@ const NAV_COMPONENT = `
         <h2 style="font-size:18px; font-weight:700; color:white; margin:0;">JARVIS <span style="opacity:0.4; font-weight:300;">CORE</span></h2>
         <div style="width:20px; height:2px; background:var(--accent); margin-top:8px;"></div>
     </div>
-    
-    <a href="/intelligence-core" class="nav-link"><span>⚡</span> THE WORK</a>
+
+    <a href="/intelligence-core" class="nav-link"><span>⚡</span> Jarvi Core</a>
     <a href="/vantage" class="nav-link"><span>🌌</span> VANTAGE POINT</a>
     
     <div style="margin-top:auto; padding:25px; border-radius:20px; background:linear-gradient(135deg, rgba(0,212,255,0.05), transparent); border:1px solid rgba(0,212,255,0.1);">
@@ -141,16 +143,16 @@ const NAV_COMPONENT = `
 
 const VOICE_SCRIPT = `
 <script>
-    // Voice system integrated with Jarvis's brotherly tone
-    const recognition = (window.SpeechRecognition || window.webkitSpeechRecognition) ? new (window.SpeechRecognition || window.webkitSpeechRecognition)() : null;
-    if (recognition) {
-        recognition.onresult = (event) => {
-            const text = event.results[0][0].transcript;
-            const activeInput = document.getElementById('terminal-in') || document.querySelector('.input-field:focus');
-            if(activeInput) activeInput.value = text;
-        };
-    }
+const recognition = (window.SpeechRecognition || window.webkitSpeechRecognition) ? new (window.SpeechRecognition || window.webkitSpeechRecognition)() : null;
+if (recognition) {
+    recognition.onresult = (event) => {
+        const text = event.results[0][0].transcript;
+        const activeInput = document.getElementById('jarvis-input') || document.querySelector('.input-field:focus');
+        if(activeInput) activeInput.value = text;
+    };
+}
 </script>
 `;
 
 module.exports = { HUD_STYLE, NAV_COMPONENT, VOICE_SCRIPT };
+
