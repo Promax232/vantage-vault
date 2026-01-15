@@ -1,17 +1,16 @@
 const mongoose = require('mongoose');
 
-const missionLogSchema = new mongoose.Schema({
-    topic: { type: String, default: 'General' }, // e.g., 'C++', 'Neuro-Engineering', 'Social Fast'
+const MissionLogSchema = new mongoose.Schema({
+    topic: { type: String, default: 'main-hud' }, // The Session ID
     userInput: { type: String, required: true },
     aiResponse: { type: String, required: true },
-    metadata: {
-        sentiment: String,
-        tags: [String], // e.g., ['pointer', 'logic', 'refactor']
-    }
-}, { timestamps: true });
+    
+    // --- VAULT SPECIFIC FIELDS ---
+    isVaultItem: { type: Boolean, default: false }, // Flag for "Save" intent
+    extractedInfo: { type: String }, // The "savePayload" from the Router
+    category: { type: String, default: 'General' }, // Engineering, Anime, Strategy, etc.
+    
+    timestamp: { type: Date, default: Date.now }
+});
 
-// This ensures your database stays lean by GOD'S Grace.
-// 500MB is a lot, but this index lets you auto-delete 'Logistical' notes if you ever want to.
-const MissionLog = mongoose.model('MissionLog', missionLogSchema);
-
-module.exports = { MissionLog };
+module.exports = { MissionLog: mongoose.model('MissionLog', MissionLogSchema) };

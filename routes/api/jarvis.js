@@ -1,41 +1,51 @@
 const express = require('express');
 const router = express.Router();
 const { processUserQuery } = require('../../utils/intelligenceCore');
-const { MissionLog } = require('../../db/index'); 
+const { saveChatHistory, getChatHistory } = require('../../utils/memoryBank');
+// We now import saveMissionMemory for the unified Vault/Archive logic
+const { MissionLog, saveMissionMemory } = require('../../db/index'); 
 
 router.post('/query', async (req, res) => {
-    const { message } = req.body;
+    const { message, sessionId = "main-hud" } = req.body;
     
     try {
-        // 1. Context Retrieval (Last 3 missions for JIT learning)
-        // Sir, we limit this to 3 to prevent "Context Bloat" in the Groq buffer.
-        const recentLogs = await MissionLog.find()
-            .sort({ createdAt: -1 })
-            .limit(3)
-            .lean(); // Faster execution
-            
-        const history = recentLogs.length > 0 
-            ? recentLogs.reverse().map(l => `User: ${l.userInput}\nJarvis: ${l.aiResponse}`).join('\n---\n')
-            : "First contact protocol initiated.";
+        // --- 1. MEMORY RETRIEVAL (The Tiered Approach) ---
+        const { historyArray, summaryText } = await getChatHistory(sessionId);
+        
+        const historyContext = summaryText + (historyArray.length > 0 
+            ? historyArray.map(m => `${m.role === 'user' ? 'User' : 'Jarvis'}: ${m.content}`).join('\n')
+            : "First contact protocol initiated.");
 
-        // 2. Intelligence Execution
-        // This triggers the Tavily/Groq logic we built in the Core.
-        const result = await processUserQuery(message, history);
+        // --- 2. INTELLIGENCE EXECUTION ---
+        // The Brain now returns 'saveData' if a directive was detected
+        const result = await processUserQuery(message, historyContext);
 
-        // 3. Vault Logging (Async - No 'await' to keep the HUD snappy)
-        MissionLog.create({ 
-            userInput: message, 
-            aiResponse: result.response, 
-            topic: "Neuro-Engineering / General" 
-        }).catch(err => console.error("⚠️ Vault Save Error:", err.message));
+        // --- 3. HOT MEMORY SYNC (Upstash Redis) ---
+        const updatedHistory = [...historyArray, 
+            { role: 'user', content: message },
+            { role: 'assistant', content: result.response }
+        ];
+        
+        saveChatHistory(sessionId, updatedHistory).catch(err => 
+            console.error("⚠️ Redis Sync Error:", err.message)
+        );
 
-        // 4. Transmission
+        // --- 4. UNIFIED VAULT & ARCHIVE (MongoDB) ---
+        // This handles standard logging AND specific technical saves silently
+        saveMissionMemory(
+            sessionId, 
+            message, 
+            result.response, 
+            result.saveData 
+        ).catch(err => console.error("⚠️ Vault Save Error:", err.message));
+
+        // --- 5. TRANSMISSION ---
         res.json(result);
 
     } catch (err) {
         console.error("🔥 Route Failure:", err);
         res.status(500).json({ 
-            response: "Sir, a neural spike has disrupted the transmission. Check the server logs.",
+            response: "Sir, a neural spike has disrupted the transmission. Memory links remain intact.",
             source: "SYSTEM_ERROR" 
         });
     }

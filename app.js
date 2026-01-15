@@ -6,8 +6,16 @@ const path = require('path');
 
 const app = express();
 
-// --- 1. SYSTEM INTEGRITY CHECK ---
-const REQUIRED_KEYS = ['MONGO_URI', 'GROQ_API_KEY', 'TAVILY_API_KEY'];
+// --- 1. SYSTEM INTEGRITY CHECK (Updated for Mark II Memory) ---
+// Sir, we now verify Upstash credentials on startup to prevent memory failures.
+const REQUIRED_KEYS = [
+    'MONGO_URI', 
+    'GROQ_API_KEY', 
+    'TAVILY_API_KEY',
+    'UPSTASH_REDIS_REST_URL',
+    'UPSTASH_REDIS_REST_TOKEN'
+];
+
 REQUIRED_KEYS.forEach(key => {
     if (!process.env[key]) {
         console.error(`❌ CRITICAL FAILURE: ${key} missing. JARVIS cannot initialize.`);
@@ -31,7 +39,7 @@ app.get('/service-worker.js', (req, res) => res.sendFile(path.join(__dirname, 'p
 const jarvisRoutes = require('./routes/api/jarvis');
 app.use('/api/jarvis', jarvisRoutes);
 
-// --- 5. VAULT UPLINK (MongoDB) ---
+// --- 5. VAULT UPLINK (MongoDB - Long Term Storage) ---
 const connectVault = async () => {
     try {
         await mongoose.connect(process.env.MONGO_URI);
@@ -43,8 +51,11 @@ const connectVault = async () => {
 };
 connectVault();
 
+// Note: Upstash (Short Term Memory) is Serverless. 
+// It does not require a 'connect' function here. 
+// It is initialized on-demand in 'utils/memoryBank.js'.
+
 // --- 6. UNIFIED HUD REDIRECT ---
-// This ensures that even if you visit /intelligence-core, it sends you to the HUD
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -55,7 +66,6 @@ app.get('/intelligence-core', (req, res) => {
 
 // --- 7. FAILSAFE HANDLERS ---
 app.use((req, res) => {
-    // Sir, if a route is missing, we bring them back to the HUD instead of showing a 404
     res.redirect('/');
 });
 
